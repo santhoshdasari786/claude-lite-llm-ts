@@ -1,6 +1,6 @@
 {
   "name": "@santhoshdasari/claude-lite-llm-ts",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "This is a library for claude wrapper for litellm that can be used to use claude subscriptions programatically",
   "keywords": [
     "typescript",
@@ -39,7 +39,8 @@
   "sideEffects": false,
   "publishConfig": {
     "access": "public",
-    "registry": "https://registry.npmjs.org"
+    "registry": "https://registry.npmjs.org",
+    "provenance": true
   },
   "scripts": {
     "build": "tsup",
