@@ -1,0 +1,17 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: "claude-lite-llm-ts"
+  description: "This is a library for claude wrapper for litellm that can be used to use claude subscriptions programatically"
+  annotations:
+    github.com/project-slug: santhoshdasari786/claude-lite-llm-ts
+  tags:
+    - typescript
+    - node
+    - npm
+    - library
+spec:
+  type: library
+  owner: "user:default/santhoshdasari786"
+  lifecycle: "production"
+  system: "system:default/personal-backstage-instance-system"
