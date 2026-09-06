@@ -40,7 +40,14 @@ export class ClaudeClient {
     this.defaultModel = options.defaultModel;
     this.defaultSystemPrompt = options.defaultSystemPrompt;
     this.cwd = options.cwd ? path.resolve(options.cwd) : undefined;
-    this.claudePath = this.resolveClaudePath(options.claudePath);
+    try {
+      this.claudePath = this.resolveClaudePath(options.claudePath);
+    } catch (err) {
+      if (options.claudePath) {
+        throw err;
+      }
+      this.claudePath = '';
+    }
   }
 
   /**
@@ -237,7 +244,8 @@ export class ClaudeClient {
       args.push('--dangerously-skip-permissions');
     }
 
-    return { cmd: this.claudePath, args };
+    const cmd = this.claudePath || this.resolveClaudePath();
+    return { cmd, args };
   }
 
   /**

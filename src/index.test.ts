@@ -19,13 +19,13 @@ describe('ClaudeClient', () => {
   beforeEach(() => {
     client = new ClaudeClient({
       token: 'test-token-123',
-      claudePath: '/Users/dssanthosh/.local/bin/claude',
+      claudePath: process.execPath,
     });
   });
 
   it('initializes with token and resolves binary', () => {
     expect(client.token).toBe('test-token-123');
-    expect(client.claudePath).toBe('/Users/dssanthosh/.local/bin/claude');
+    expect(client.claudePath).toBe(process.execPath);
   });
 
   it('throws ClaudeCLINotFoundError when path is invalid', () => {
@@ -72,7 +72,7 @@ describe('ClaudeClient', () => {
       dangerouslySkipPermissions: true,
     });
 
-    expect(cmd).toBe('/Users/dssanthosh/.local/bin/claude');
+    expect(cmd).toBe(process.execPath);
     expect(args).toEqual([
       '-p',
       'Test prompt',
@@ -144,7 +144,7 @@ describe('ClaudeClient', () => {
 describe('ClaudeSubscriptionProvider & LiteLLM Integration', () => {
   it('cleans model name prefix properly', () => {
     const provider = new ClaudeSubscriptionProvider({
-      claudePath: '/Users/dssanthosh/.local/bin/claude',
+      claudePath: process.execPath,
     });
 
     expect(provider.cleanModelName('claude_sub/sonnet')).toBe('sonnet');
@@ -228,10 +228,42 @@ describe('ClaudeSubscriptionProvider & LiteLLM Integration', () => {
 });
 
 describe('createClaudeServer', () => {
-  it('creates an HTTP server instance', () => {
-    const server = createClaudeServer();
+  it('creates an HTTP server instance and responds to /health', async () => {
+    const server = createClaudeServer({
+      client: new ClaudeClient({ claudePath: process.execPath }),
+    });
     expect(server).toBeDefined();
     expect(typeof server.listen).toBe('function');
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address() as import('node:net').AddressInfo;
+        import('node:http').then(({ get }) => {
+          get(`http://127.0.0.1:${addr.port}/health`, (res) => {
+            expect(res.statusCode).toBe(200);
+            server.close(() => resolve());
+          });
+        });
+      });
+    });
+  });
+
+  it('responds to /v1/models', async () => {
+    const server = createClaudeServer({
+      client: new ClaudeClient({ claudePath: process.execPath }),
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address() as import('node:net').AddressInfo;
+        import('node:http').then(({ get }) => {
+          get(`http://127.0.0.1:${addr.port}/v1/models`, (res) => {
+            expect(res.statusCode).toBe(200);
+            server.close(() => resolve());
+          });
+        });
+      });
+    });
   });
 });
 
@@ -245,7 +277,13 @@ describe('greet', () => {
   });
 });
 
-describe('completion top-level function', () => {
+describe('core functions', () => {
+  it('createClient returns a ClaudeClient instance', async () => {
+    const { createClient } = await import('./core.js');
+    const c = createClient({ claudePath: process.execPath });
+    expect(c).toBeInstanceOf(ClaudeClient);
+  });
+
   it('instantiates client and calls completion', async () => {
     const spy = vi.spyOn(ClaudeClient.prototype, 'completion').mockResolvedValueOnce({
       content: 'Top-level completion response',
@@ -254,11 +292,30 @@ describe('completion top-level function', () => {
     });
 
     const res = await completion('Hello top level', {
-      claudePath: '/Users/dssanthosh/.local/bin/claude',
+      claudePath: process.execPath,
     });
 
     expect(spy).toHaveBeenCalledTimes(1);
     expect(res.content).toBe('Top-level completion response');
+    spy.mockRestore();
+  });
+
+  it('calls completionStream', async () => {
+    const { completionStream } = await import('./core.js');
+    async function* mockStream() {
+      yield { type: 'delta' as const, text: 'Streamed' };
+    }
+    const spy = vi
+      .spyOn(ClaudeClient.prototype, 'completionStream')
+      .mockReturnValueOnce(mockStream());
+
+    const chunks = [];
+    for await (const chunk of completionStream('Test stream', { claudePath: process.execPath })) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]!.text).toBe('Streamed');
     spy.mockRestore();
   });
 });
