@@ -1,6 +1,6 @@
 {
   "name": "@santhoshdasari/claude-lite-llm-ts",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "This is a library for claude wrapper for litellm that can be used to use claude subscriptions programatically",
   "keywords": [
     "typescript",

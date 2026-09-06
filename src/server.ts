@@ -67,13 +67,35 @@ export function createClaudeServer(options: ServerOptions = {}): http.Server {
       req.on('end', async () => {
         try {
           const parsed = JSON.parse(body) as ChatCompletionRequest;
-          const result = await provider.completion(parsed);
 
+          // Real-time Server-Sent Events (SSE) streaming
+          if (parsed.stream) {
+            res.writeHead(200, {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              Connection: 'keep-alive',
+              'X-Accel-Buffering': 'no',
+            });
+
+            const stream = provider.completionStream(parsed);
+            for await (const chunk of stream) {
+              res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+            }
+
+            res.write('data: [DONE]\n\n');
+            res.end();
+            return;
+          }
+
+          // Non-streaming completion
+          const result = await provider.completion(parsed);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(result));
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : String(err);
-          res.writeHead(500, { 'Content-Type': 'application/json' });
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+          }
           res.end(
             JSON.stringify({
               error: {

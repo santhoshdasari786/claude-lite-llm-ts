@@ -4,6 +4,7 @@
 
 import { ClaudeError } from './exceptions.js';
 import type {
+  ChatCompletionChunk,
   ChatCompletionRequest,
   CustomLLMHandler,
   CustomProviderEntry,
@@ -38,8 +39,18 @@ export class LiteLLMManager {
 
   /**
    * Dispatches completion to the matching custom handler.
+   * Automatically supports streaming if `params.stream === true`.
    */
-  public async completion(params: ChatCompletionRequest): Promise<ModelResponse> {
+  public completion(
+    params: ChatCompletionRequest & { stream: true },
+  ): Promise<AsyncIterable<ChatCompletionChunk>>;
+  public completion(params: ChatCompletionRequest & { stream?: false }): Promise<ModelResponse>;
+  public completion(
+    params: ChatCompletionRequest,
+  ): Promise<ModelResponse | AsyncIterable<ChatCompletionChunk>>;
+  public async completion(
+    params: ChatCompletionRequest,
+  ): Promise<ModelResponse | AsyncIterable<ChatCompletionChunk>> {
     if (!params || !params.model) {
       throw new ClaudeError('Model must be specified in completion request', 'ERR_INVALID_REQUEST');
     }
@@ -76,8 +87,20 @@ export class LiteLLMManager {
   /**
    * Async alias for parity with LiteLLM's acompletion.
    */
-  public async acompletion(params: ChatCompletionRequest): Promise<ModelResponse> {
-    return this.completion(params);
+  public acompletion(
+    params: ChatCompletionRequest & { stream: true },
+  ): Promise<AsyncIterable<ChatCompletionChunk>>;
+  public acompletion(params: ChatCompletionRequest & { stream?: false }): Promise<ModelResponse>;
+  public acompletion(
+    params: ChatCompletionRequest,
+  ): Promise<ModelResponse | AsyncIterable<ChatCompletionChunk>>;
+  public async acompletion(
+    params: ChatCompletionRequest,
+  ): Promise<ModelResponse | AsyncIterable<ChatCompletionChunk>> {
+    if (params.stream) {
+      return this.completion(params as ChatCompletionRequest & { stream: true });
+    }
+    return this.completion(params as ChatCompletionRequest & { stream?: false });
   }
 }
 

@@ -262,3 +262,87 @@ describe('completion top-level function', () => {
     spy.mockRestore();
   });
 });
+
+describe('ClaudeSubscriptionProvider Tool Calling', () => {
+  it('detects and parses JSON tool calls into OpenAI tool_calls structure', async () => {
+    const mockClient = {
+      completion: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          tool_calls: [
+            {
+              name: 'get_weather',
+              arguments: { location: 'Tokyo', unit: 'celsius' },
+            },
+          ],
+        }),
+        durationMs: 100,
+        usage: { inputTokens: 10, outputTokens: 15, totalTokens: 25, totalCostUsd: 0.001 },
+      }),
+    } as unknown as ClaudeClient;
+
+    const provider = new ClaudeSubscriptionProvider({ client: mockClient });
+
+    const response = (await provider.completion({
+      model: 'claude_sub/sonnet',
+      messages: [{ role: 'user', content: 'What is the weather in Tokyo?' }],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'get_weather',
+            description: 'Get weather for location',
+            parameters: {
+              type: 'object',
+              properties: { location: { type: 'string' } },
+            },
+          },
+        },
+      ],
+    })) as import('./types.js').ModelResponse;
+
+    expect(response.choices[0]!.finish_reason).toBe('tool_calls');
+    expect(response.choices[0]!.message.tool_calls).toHaveLength(1);
+    expect(response.choices[0]!.message.tool_calls![0]!.function.name).toBe('get_weather');
+    expect(JSON.parse(response.choices[0]!.message.tool_calls![0]!.function.arguments)).toEqual({
+      location: 'Tokyo',
+      unit: 'celsius',
+    });
+  });
+});
+
+describe('ClaudeSubscriptionProvider Streaming', () => {
+  it('streams ChatCompletionChunk objects in real time', async () => {
+    async function* mockStream() {
+      yield { type: 'delta' as const, text: 'Hello' };
+      yield { type: 'delta' as const, text: ' world' };
+      yield {
+        type: 'final' as const,
+        text: '',
+        usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7, totalCostUsd: 0.0001 },
+      };
+    }
+
+    const mockClient = {
+      completionStream: vi.fn().mockReturnValue(mockStream()),
+    } as unknown as ClaudeClient;
+
+    const provider = new ClaudeSubscriptionProvider({ client: mockClient });
+
+    const stream = (await provider.completion({
+      model: 'claude_sub/sonnet',
+      messages: [{ role: 'user', content: 'Say hello world' }],
+      stream: true,
+    })) as AsyncIterable<import('./types.js').ChatCompletionChunk>;
+
+    const chunks: import('./types.js').ChatCompletionChunk[] = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]!.choices[0]!.delta.content).toBe('Hello');
+    expect(chunks[1]!.choices[0]!.delta.content).toBe(' world');
+    expect(chunks[2]!.choices[0]!.finish_reason).toBe('stop');
+    expect(chunks[2]!.usage?.total_tokens).toBe(7);
+  });
+});

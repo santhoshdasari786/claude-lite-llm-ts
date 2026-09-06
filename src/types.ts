@@ -2,11 +2,13 @@
  * Types and interfaces for claude-lite-llm-ts.
  */
 
-export type Role = 'system' | 'user' | 'assistant';
+export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface Message {
   role: Role | string;
   content: string;
+  name?: string;
+  tool_call_id?: string;
 }
 
 export interface UsageInfo {
@@ -21,7 +23,16 @@ export interface ClaudeResponse {
   sessionId?: string;
   durationMs: number;
   usage: UsageInfo;
+  structuredOutput?: unknown;
   raw?: Record<string, unknown>;
+}
+
+export interface ClaudeStreamChunk {
+  type: 'delta' | 'final';
+  text: string;
+  usage?: UsageInfo;
+  sessionId?: string;
+  raw?: unknown;
 }
 
 export interface ClaudeClientOptions {
@@ -64,8 +75,19 @@ export interface CompletionOptions {
   /**
    * Built-in tools allowed. Defaults to `""` (empty string) to disable all tools
    * for pure text LLM generation. Set to `null` to use CLI default tools.
+   * Can also be a comma-separated string or array like `['Read', 'Glob', 'Grep']`.
    */
   tools?: string | string[] | null;
+  /**
+   * JSON Schema for structured output validation.
+   * Passed directly to Claude CLI `--json-schema`.
+   */
+  jsonSchema?: string | Record<string, unknown>;
+  /**
+   * Load MCP (Model Context Protocol) servers from JSON files or strings.
+   * Passed directly to Claude CLI `--mcp-config`.
+   */
+  mcpConfig?: string | string[] | Record<string, unknown>;
   /**
    * Session ID for multi-turn conversations or pinned sessions.
    */
@@ -85,6 +107,29 @@ export interface CompletionOptions {
 }
 
 /**
+ * Tool / Function Calling definitions conforming to OpenAI / LiteLLM standard.
+ */
+export interface FunctionDefinition {
+  name: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+}
+
+export interface ToolDefinition {
+  type: 'function';
+  function: FunctionDefinition;
+}
+
+export interface ToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+/**
  * OpenAI / LiteLLM compatible request parameters.
  */
 export interface ChatCompletionRequest {
@@ -94,7 +139,13 @@ export interface ChatCompletionRequest {
   max_tokens?: number;
   stream?: boolean;
   system?: string;
-  tools?: unknown;
+  tools?: ToolDefinition[];
+  tool_choice?:
+    'none' | 'auto' | 'required' | { type: 'function'; function: { name: string } } | unknown;
+  response_format?: {
+    type: 'json_object' | 'json_schema';
+    json_schema?: { schema: Record<string, unknown> };
+  };
   timeout?: number;
   [key: string]: unknown;
 }
@@ -106,7 +157,8 @@ export interface ChatCompletionChoice {
   index: number;
   message: {
     role: 'assistant';
-    content: string;
+    content: string | null;
+    tool_calls?: ToolCall[];
   };
   finish_reason: 'stop' | 'length' | 'tool_calls' | 'content_filter' | null;
 }
@@ -130,11 +182,49 @@ export interface ModelResponse {
 }
 
 /**
+ * Streaming chunk types conforming to OpenAI / LiteLLM standard.
+ */
+export interface ChatCompletionChunkChoice {
+  index: number;
+  delta: {
+    role?: 'assistant';
+    content?: string;
+    tool_calls?: Array<{
+      index?: number;
+      id?: string;
+      type?: 'function';
+      function?: {
+        name?: string;
+        arguments?: string;
+      };
+    }>;
+  };
+  finish_reason: 'stop' | 'length' | 'tool_calls' | null;
+}
+
+export interface ChatCompletionChunk {
+  id: string;
+  object: 'chat.completion.chunk';
+  created: number;
+  model: string;
+  choices: ChatCompletionChunkChoice[];
+  usage?: ChatCompletionUsage;
+}
+
+/**
  * LiteLLM custom provider handler interface.
  */
 export interface CustomLLMHandler {
-  completion(params: ChatCompletionRequest): Promise<ModelResponse>;
-  acompletion?(params: ChatCompletionRequest): Promise<ModelResponse>;
+  completion(
+    params: ChatCompletionRequest,
+  ):
+    | Promise<ModelResponse | AsyncIterable<ChatCompletionChunk>>
+    | AsyncIterable<ChatCompletionChunk>;
+  acompletion?(
+    params: ChatCompletionRequest,
+  ):
+    | Promise<ModelResponse | AsyncIterable<ChatCompletionChunk>>
+    | AsyncIterable<ChatCompletionChunk>;
 }
 
 export interface CustomProviderEntry {

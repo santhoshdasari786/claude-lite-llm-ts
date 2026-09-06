@@ -3,7 +3,13 @@
  */
 
 import { ClaudeClient } from './client.js';
-import type { ClaudeClientOptions, ClaudeResponse, CompletionOptions, Message } from './types.js';
+import type {
+  ClaudeClientOptions,
+  ClaudeResponse,
+  ClaudeStreamChunk,
+  CompletionOptions,
+  Message,
+} from './types.js';
 
 /**
  * Creates and configures a new `ClaudeClient` instance.
@@ -20,7 +26,7 @@ export function createClient(options: ClaudeClientOptions = {}): ClaudeClient {
  *
  * Usage:
  * ```typescript
- * import { completion } from '@santhoshdasari786/claude-lite-llm-ts';
+ * import { completion } from '@santhoshdasari/claude-lite-llm-ts';
  *
  * const response = await completion('Explain quantum computing in 2 sentences');
  * console.log(response.content);
@@ -40,6 +46,34 @@ export async function completion(
   });
 
   return client.completion(prompt, options);
+}
+
+/**
+ * Top-level convenience function to stream responses in real time.
+ *
+ * Usage:
+ * ```typescript
+ * import { completionStream } from '@santhoshdasari/claude-lite-llm-ts';
+ *
+ * for await (const chunk of completionStream('Count 1 to 5')) {
+ *   if (chunk.type === 'delta') process.stdout.write(chunk.text);
+ * }
+ * ```
+ */
+export async function* completionStream(
+  prompt: string | Message[],
+  options: CompletionOptions & ClaudeClientOptions = {},
+): AsyncIterable<ClaudeStreamChunk> {
+  const client = new ClaudeClient({
+    token: options.token,
+    claudePath: options.claudePath,
+    envFile: options.envFile,
+    defaultModel: options.defaultModel,
+    defaultSystemPrompt: options.defaultSystemPrompt,
+    cwd: options.cwd,
+  });
+
+  yield* client.completionStream(prompt, options);
 }
 
 /**

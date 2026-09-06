@@ -7,7 +7,7 @@
 
 A lightweight TypeScript wrapper around Anthropic's `claude` (Claude Code) CLI that allows developers to run Claude LLMs programmatically using their active **Claude Pro/Team/Max subscription** via `CLAUDE_CODE_TOKEN` — bypassing pay-per-token API keys.
 
-Includes a **`ClaudeSubscriptionProvider`** adapter and a **`litellm`** compatibility layer for registering custom providers in LLM pipelines, plus an OpenAI-compatible local proxy server.
+Includes a **`ClaudeSubscriptionProvider`** adapter and a **`litellm`** compatibility layer for registering custom providers in LLM pipelines, plus real-time streaming, OpenAI function calling / tools support, and a local OpenAI-compatible HTTP proxy server.
 
 ---
 
@@ -15,10 +15,12 @@ Includes a **`ClaudeSubscriptionProvider`** adapter and a **`litellm`** compatib
 
 - 🎟️ **Subscription-Powered**: Authenticate using your Claude subscription token (`CLAUDE_CODE_TOKEN`) instead of per-token API keys.
 - 🔌 **LiteLLM Custom Provider**: Export and register `ClaudeSubscriptionProvider` via `litellm.custom_provider_map = [...]`.
+- 🌊 **Real-Time Token Streaming**: Native line-by-line token streaming via `stream: true` or `completionStream()`.
+- 🛠️ **OpenAI Tool / Function Calling**: Support for OpenAI-format `tools` returning structured `tool_calls` with `finish_reason: "tool_calls"`.
 - ⚡ **OpenAI / LiteLLM Response Parity**: Returns OpenAI-compatible `ModelResponse` with `choices`, `role`, and token `usage` metrics.
 - 💬 **Flexible Prompt Formats**: Pass raw prompt strings or conversational message arrays (`[{ role: 'user', content: '...' }]`).
-- 🛡️ **Safe LLM Execution**: Disables built-in CLI tool execution (file editing, shell execution) by default with `--tools ""` for pure text completions.
-- 🌐 **Built-in OpenAI-Compatible HTTP Proxy**: Run a local HTTP server (`/v1/chat/completions`, `/v1/models`) to integrate with any OpenAI client, LangChain, or LiteLLM proxy.
+- 🛡️ **Safe LLM Execution**: Disables built-in CLI tool execution by default (`--tools ""`) for pure text completions.
+- 🌐 **Built-in OpenAI-Compatible HTTP Proxy**: Run a local HTTP server (`/v1/chat/completions` with SSE streaming, `/v1/models`) to integrate with any OpenAI client, LangChain, or LiteLLM proxy.
 - 📦 **Dual ESM & CommonJS**: Full TypeScript types, tree-shaking support, and dual module builds.
 
 ---
@@ -60,11 +62,9 @@ CLAUDE_CODE_TOKEN=sk-ant-oat01-...
 
 ---
 
-## Quick Start
+## Usage Guide
 
 ### 1. Register with LiteLLM Custom Provider
-
-Use the exact custom provider registration pattern with LiteLLM:
 
 ```typescript
 import { litellm, ClaudeSubscriptionProvider } from '@santhoshdasari/claude-lite-llm-ts';
@@ -86,7 +86,88 @@ console.log(response.choices[0].message.content);
 console.log('Tokens:', response.usage);
 ```
 
-### 2. Direct Function Call (`completion`)
+---
+
+### 2. Real-Time Token Streaming 🌊
+
+#### Via `litellm.completion({ stream: true })`
+
+```typescript
+import { litellm, ClaudeSubscriptionProvider } from '@santhoshdasari/claude-lite-llm-ts';
+
+const claude_provider = new ClaudeSubscriptionProvider();
+litellm.custom_provider_map = [{ provider: 'claude_sub', custom_handler: claude_provider }];
+
+const stream = await litellm.completion({
+  model: 'claude_sub/sonnet',
+  messages: [{ role: 'user', content: 'Count from 1 to 5 slowly.' }],
+  stream: true,
+});
+
+for await (const chunk of stream) {
+  const token = chunk.choices[0]?.delta?.content;
+  if (token) process.stdout.write(token);
+}
+```
+
+#### Via direct `completionStream()`
+
+```typescript
+import { completionStream } from '@santhoshdasari/claude-lite-llm-ts';
+
+for await (const chunk of completionStream('Write a short haiku about coding.')) {
+  if (chunk.type === 'delta') {
+    process.stdout.write(chunk.text);
+  } else if (chunk.type === 'final') {
+    console.log('\nUsage:', chunk.usage);
+  }
+}
+```
+
+---
+
+### 3. OpenAI Tools & Function Calling 🛠️
+
+Pass standard OpenAI-compatible tool definitions. The provider prompts Claude and returns standard `tool_calls`:
+
+```typescript
+import { litellm, ClaudeSubscriptionProvider } from '@santhoshdasari/claude-lite-llm-ts';
+
+const claude_provider = new ClaudeSubscriptionProvider();
+litellm.custom_provider_map = [{ provider: 'claude_sub', custom_handler: claude_provider }];
+
+const response = await litellm.completion({
+  model: 'claude_sub/sonnet',
+  messages: [{ role: 'user', content: 'What is the weather in Tokyo right now?' }],
+  tools: [
+    {
+      type: 'function',
+      function: {
+        name: 'get_current_weather',
+        description: 'Get current weather in a location',
+        parameters: {
+          type: 'object',
+          properties: {
+            location: { type: 'string', description: 'The city, e.g. Tokyo' },
+            unit: { type: 'string', enum: ['celsius', 'fahrenheit'] },
+          },
+          required: ['location'],
+        },
+      },
+    },
+  ],
+});
+
+if (response.choices[0].finish_reason === 'tool_calls') {
+  const toolCall = response.choices[0].message.tool_calls[0];
+  console.log('Function Name:', toolCall.function.name);
+  console.log('Arguments:', JSON.parse(toolCall.function.arguments));
+}
+```
+
+---
+
+### 4. Direct Function Call (`completion`)
 
 ```typescript
 import { completion } from '@santhoshdasari/claude-lite-llm-ts';
@@ -99,47 +180,45 @@ console.log(response.content);
 console.log(`Tokens: ${response.usage.inputTokens} in / ${response.usage.outputTokens} out`);
 ```
 
-### 3. Using `ClaudeClient` Class
+---
 
-```typescript
-import { ClaudeClient } from '@santhoshdasari/claude-lite-llm-ts';
+### 5. Run as Local OpenAI Proxy Server (with SSE Streaming)
 
-const client = new ClaudeClient({
-  defaultModel: 'sonnet',
-  // token: 'sk-ant-oat01-...', // optional: auto-loads CLAUDE_CODE_TOKEN from .env
-});
-
-const response = await client.completion([
-  { role: 'user', content: 'Draft a quick haiku about coding.' },
-]);
-
-console.log(response.content);
-```
-
-### 4. Run as Local OpenAI Proxy Server
-
-You can start a local proxy server that implements the OpenAI `/v1/chat/completions` API:
+Start the proxy server via CLI:
 
 ```bash
 npx claude-lite-llm-ts serve --port 4000
 ```
 
-Or programmatically in TypeScript:
+Or programmatically:
 
 ```typescript
 import { serveClaudeProxy } from '@santhoshdasari/claude-lite-llm-ts';
 
-const { url, server } = await serveClaudeProxy({ port: 4000 });
+const { url } = await serveClaudeProxy({ port: 4000 });
 console.log(`OpenAI-compatible server running at ${url}/v1/chat/completions`);
 ```
 
-Then point any OpenAI SDK, LangChain, or Cursor to `http://localhost:4000/v1` with any dummy key (e.g. `api_key="none"`).
+You can now configure OpenAI clients, LangChain, or Cursor:
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:4000/v1", api_key="none")
+
+stream = client.chat.completions.create(
+    model="claude_sub/sonnet",
+    messages=[{"role": "user", "content": "Hello!"}],
+    stream=True,
+)
+
+for chunk in stream:
+    print(chunk.choices[0].delta.content or "", end="")
+```
 
 ---
 
 ## Error Handling
-
-When session limits or quota thresholds are reached on your Claude subscription, typed exceptions are raised:
 
 ```typescript
 import {
@@ -154,9 +233,9 @@ try {
   console.log(res.content);
 } catch (err) {
   if (err instanceof ClaudeRateLimitError) {
-    console.error('Subscription quota or rate limit reached:', err.message);
+    console.error('Subscription quota reached:', err.message);
   } else if (err instanceof ClaudeAuthError) {
-    console.error('Token authentication failure:', err.message);
+    console.error('Authentication failure:', err.message);
   } else if (err instanceof ClaudeCLINotFoundError) {
     console.error('Claude CLI executable not found:', err.message);
   } else {
@@ -167,35 +246,16 @@ try {
 
 ---
 
-## CLI Usage
+## Testing
 
 ```bash
-# Run one-off prompt
-npx claude-lite-llm-ts "What is the capital of France?" --model sonnet
-
-# Start OpenAI-compatible HTTP server
-npx claude-lite-llm-ts serve --port 4000
-```
-
----
-
-## Development
-
-```bash
-# Install dependencies
-npm install
-
-# Run test suite
+# Run unit tests
 npm test
 
-# Type check
-npm run typecheck
-
-# Lint code
-npm run lint
-
-# Build bundles
-npm run build
+# Run manual live tests
+node manual-tests/test_completion.mjs
+node manual-tests/test_stream.mjs
+node manual-tests/test_tools.mjs
 ```
 
 ---
