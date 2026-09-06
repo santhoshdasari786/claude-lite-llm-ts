@@ -1,92 +1,264 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MemoryCache, LibraryError } from './index.js';
+import {
+  ClaudeClient,
+  ClaudeSubscriptionProvider,
+  litellm,
+  completion,
+  greet,
+  ClaudeError,
+  ClaudeCLINotFoundError,
+  ClaudeAuthError,
+  ClaudeRateLimitError,
+  ClaudeExecutionError,
+  createClaudeServer,
+} from './index.js';
 
-describe('MemoryCache', () => {
+describe('ClaudeClient', () => {
+  let client: ClaudeClient;
+
   beforeEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('stores and retrieves values', () => {
-    const cache = new MemoryCache<string>();
-    cache.set('key1', 'value1');
-    expect(cache.get('key1')).toBe('value1');
-    expect(cache.has('key1')).toBe(true);
-  });
-
-  it('returns undefined for missing keys', () => {
-    const cache = new MemoryCache<number>();
-    expect(cache.get('nonexistent')).toBeUndefined();
-    expect(cache.has('nonexistent')).toBe(false);
-  });
-
-  it('supports initial entries in options', () => {
-    const cache = new MemoryCache<number>({
-      initialEntries: { a: 1, b: 2 },
+    client = new ClaudeClient({
+      token: 'test-token-123',
+      claudePath: '/Users/dssanthosh/.local/bin/claude',
     });
-    expect(cache.get('a')).toBe(1);
-    expect(cache.get('b')).toBe(2);
-    expect(cache.getStats().size).toBe(2);
   });
 
-  it('throws LibraryError when given empty key', () => {
-    const cache = new MemoryCache<string>();
-    expect(() => cache.set('', 'val')).toThrow(LibraryError);
-    expect(() => cache.set('', 'val')).toThrow('Key must be a non-empty string');
+  it('initializes with token and resolves binary', () => {
+    expect(client.token).toBe('test-token-123');
+    expect(client.claudePath).toBe('/Users/dssanthosh/.local/bin/claude');
   });
 
-  it('deletes keys properly', () => {
-    const cache = new MemoryCache<string>();
-    cache.set('foo', 'bar');
-    expect(cache.delete('foo')).toBe(true);
-    expect(cache.get('foo')).toBeUndefined();
-    expect(cache.delete('foo')).toBe(false);
+  it('throws ClaudeCLINotFoundError when path is invalid', () => {
+    expect(() => {
+      new ClaudeClient({ claudePath: '/non/existent/claude/binary' });
+    }).toThrow(ClaudeCLINotFoundError);
   });
 
-  it('clears all entries and resets stats', () => {
-    const cache = new MemoryCache<string>();
-    cache.set('a', '1');
-    cache.set('b', '2');
-    cache.get('a');
-    expect(cache.getStats().hits).toBe(1);
-
-    cache.clear();
-    expect(cache.getStats().size).toBe(0);
-    expect(cache.getStats().hits).toBe(0);
-    expect(cache.getStats().misses).toBe(0);
+  it('builds environment with CLAUDE_CODE_TOKEN', () => {
+    const env = client.buildEnv();
+    expect(env.CLAUDE_CODE_TOKEN).toBe('test-token-123');
   });
 
-  it('handles item expiration with TTL', () => {
-    vi.useFakeTimers();
-    const cache = new MemoryCache<string>({ ttlMs: 100 });
-    cache.set('temp', 'data');
-    expect(cache.get('temp')).toBe('data');
-
-    vi.advanceTimersByTime(101);
-    expect(cache.get('temp')).toBeUndefined();
-    expect(cache.has('temp')).toBe(false);
+  it('formats raw string prompts directly', () => {
+    const formatted = client.formatPrompt('What is TypeScript?');
+    expect(formatted.promptText).toBe('What is TypeScript?');
+    expect(formatted.extractedSystemPrompt).toBeUndefined();
   });
 
-  it('evicts oldest entries when maxSize is reached', () => {
-    const cache = new MemoryCache<number>({ maxSize: 2 });
-    cache.set('one', 1);
-    cache.set('two', 2);
-    cache.set('three', 3);
-
-    expect(cache.get('one')).toBeUndefined();
-    expect(cache.get('two')).toBe(2);
-    expect(cache.get('three')).toBe(3);
+  it('formats single user message directly without prefix', () => {
+    const formatted = client.formatPrompt([{ role: 'user', content: 'What is LiteLLM?' }]);
+    expect(formatted.promptText).toBe('What is LiteLLM?');
+    expect(formatted.extractedSystemPrompt).toBeUndefined();
   });
 
-  it('tracks hit and miss statistics correctly', () => {
-    const cache = new MemoryCache<string>();
-    cache.set('key', 'val');
-    cache.get('key'); // hit
-    cache.get('key'); // hit
-    cache.get('miss'); // miss
+  it('extracts system messages and structures conversation history', () => {
+    const formatted = client.formatPrompt([
+      { role: 'system', content: 'You are an expert coder.' },
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Hi there' },
+      { role: 'user', content: 'Can you help?' },
+    ]);
 
-    const stats = cache.getStats();
-    expect(stats.hits).toBe(2);
-    expect(stats.misses).toBe(1);
-    expect(stats.hitRatio).toBeCloseTo(2 / 3);
+    expect(formatted.extractedSystemPrompt).toBe('You are an expert coder.');
+    expect(formatted.promptText).toContain('User: Hello');
+    expect(formatted.promptText).toContain('Assistant: Hi there');
+    expect(formatted.promptText).toContain('User: Can you help?');
+  });
+
+  it('builds CLI command with appropriate default flags', () => {
+    const { cmd, args } = client.buildCommand('Test prompt', {
+      model: 'sonnet',
+      systemPrompt: 'System instructions',
+      dangerouslySkipPermissions: true,
+    });
+
+    expect(cmd).toBe('/Users/dssanthosh/.local/bin/claude');
+    expect(args).toEqual([
+      '-p',
+      'Test prompt',
+      '--output-format',
+      'json',
+      '--no-session-persistence',
+      '--model',
+      'sonnet',
+      '--system-prompt',
+      'System instructions',
+      '--tools',
+      '',
+      '--dangerously-skip-permissions',
+    ]);
+  });
+
+  it('parses valid JSON response from CLI', () => {
+    const mockJson = JSON.stringify({
+      result: 'Here is the answer.',
+      session_id: 'sess-abc-123',
+      duration_ms: 150,
+      total_cost_usd: 0.005,
+      usage: {
+        input_tokens: 15,
+        output_tokens: 25,
+      },
+    });
+
+    const parsed = client.parseOutput(mockJson, '', 0);
+    expect(parsed.content).toBe('Here is the answer.');
+    expect(parsed.sessionId).toBe('sess-abc-123');
+    expect(parsed.durationMs).toBe(150);
+    expect(parsed.usage.inputTokens).toBe(15);
+    expect(parsed.usage.outputTokens).toBe(25);
+    expect(parsed.usage.totalTokens).toBe(40);
+    expect(parsed.usage.totalCostUsd).toBe(0.005);
+  });
+
+  it('throws ClaudeRateLimitError on 429 or session limit messages', () => {
+    const mock429 = JSON.stringify({
+      api_error_status: 429,
+      result: 'Session limit reached. Resets at 5 PM.',
+    });
+
+    expect(() => client.parseOutput(mock429, '', 0)).toThrow(ClaudeRateLimitError);
+  });
+
+  it('throws ClaudeAuthError on 401/403 or unauthorized messages', () => {
+    const mock401 = JSON.stringify({
+      api_error_status: 401,
+      result: 'Unauthorized. Invalid subscription token.',
+    });
+
+    expect(() => client.parseOutput(mock401, '', 0)).toThrow(ClaudeAuthError);
+  });
+
+  it('throws ClaudeExecutionError on is_error response or non-zero exit code', () => {
+    const mockError = JSON.stringify({
+      is_error: true,
+      result: 'Unexpected error in claude core.',
+    });
+
+    expect(() => client.parseOutput(mockError, '', 1)).toThrow(ClaudeExecutionError);
+
+    expect(() => client.parseOutput('', 'Command failed to run', 1)).toThrow(ClaudeExecutionError);
+  });
+});
+
+describe('ClaudeSubscriptionProvider & LiteLLM Integration', () => {
+  it('cleans model name prefix properly', () => {
+    const provider = new ClaudeSubscriptionProvider({
+      claudePath: '/Users/dssanthosh/.local/bin/claude',
+    });
+
+    expect(provider.cleanModelName('claude_sub/sonnet')).toBe('sonnet');
+    expect(provider.cleanModelName('claude-sub/haiku')).toBe('haiku');
+    expect(provider.cleanModelName('claude-3-7-sonnet-latest')).toBe('claude-3-7-sonnet-latest');
+  });
+
+  it('converts ClaudeResponse to OpenAI/LiteLLM ModelResponse', async () => {
+    const mockClient = {
+      completion: vi.fn().mockResolvedValue({
+        content: 'Response text from subscription Claude',
+        sessionId: 'test-session',
+        durationMs: 250,
+        usage: {
+          inputTokens: 20,
+          outputTokens: 30,
+          totalTokens: 50,
+          totalCostUsd: 0.002,
+        },
+      }),
+    } as unknown as ClaudeClient;
+
+    const provider = new ClaudeSubscriptionProvider({ client: mockClient });
+
+    const response = await provider.completion({
+      model: 'claude_sub/sonnet',
+      messages: [{ role: 'user', content: 'Hello Claude' }],
+    });
+
+    expect(response.object).toBe('chat.completion');
+    expect(response.model).toBe('sonnet');
+    expect(response.choices[0]!.message.content).toBe('Response text from subscription Claude');
+    expect(response.choices[0]!.finish_reason).toBe('stop');
+    expect(response.usage.prompt_tokens).toBe(20);
+    expect(response.usage.completion_tokens).toBe(30);
+    expect(response.usage.total_tokens).toBe(50);
+  });
+
+  it('registers and dispatches via litellm.custom_provider_map', async () => {
+    const mockHandler = {
+      completion: vi.fn().mockResolvedValue({
+        id: 'chatcmpl-test',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: 'sonnet',
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'Handled via custom provider!' },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 5, completion_tokens: 10, total_tokens: 15 },
+      }),
+    };
+
+    // User's exact requested pattern:
+    litellm.custom_provider_map = [{ provider: 'claude_sub', custom_handler: mockHandler }];
+
+    expect(litellm.custom_provider_map).toHaveLength(1);
+
+    const result = await litellm.completion({
+      model: 'claude_sub/sonnet',
+      messages: [{ role: 'user', content: 'Ping' }],
+    });
+
+    expect(mockHandler.completion).toHaveBeenCalledTimes(1);
+    expect(result.choices[0]!.message.content).toBe('Handled via custom provider!');
+  });
+
+  it('throws error when provider is unknown', async () => {
+    litellm.custom_provider_map = [];
+
+    await expect(
+      litellm.completion({
+        model: 'unknown_provider/model',
+        messages: [{ role: 'user', content: 'Ping' }],
+      }),
+    ).rejects.toThrow(ClaudeError);
+  });
+});
+
+describe('createClaudeServer', () => {
+  it('creates an HTTP server instance', () => {
+    const server = createClaudeServer();
+    expect(server).toBeDefined();
+    expect(typeof server.listen).toBe('function');
+  });
+});
+
+describe('greet', () => {
+  it('returns formatted greeting', () => {
+    expect(greet('World')).toBe('Hello, World!');
+  });
+
+  it('throws if name is empty', () => {
+    expect(() => greet('')).toThrow('name must not be empty');
+  });
+});
+
+describe('completion top-level function', () => {
+  it('instantiates client and calls completion', async () => {
+    const spy = vi.spyOn(ClaudeClient.prototype, 'completion').mockResolvedValueOnce({
+      content: 'Top-level completion response',
+      durationMs: 120,
+      usage: { inputTokens: 5, outputTokens: 10, totalTokens: 15, totalCostUsd: 0.001 },
+    });
+
+    const res = await completion('Hello top level', {
+      claudePath: '/Users/dssanthosh/.local/bin/claude',
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(res.content).toBe('Top-level completion response');
+    spy.mockRestore();
   });
 });

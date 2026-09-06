@@ -1,6 +1,32 @@
+/**
+ * @santhoshdasari/claude-lite-llm-ts
+ *
+ * Programmatic Claude CLI wrapper and LiteLLM custom provider powered by Claude subscriptions.
+ */
+
+export { ClaudeClient } from './client.js';
+export { ClaudeSubscriptionProvider, type ClaudeSubscriptionProviderOptions } from './provider.js';
+export { litellm, LiteLLMManager } from './litellm.js';
+export { createClaudeServer, serveClaudeProxy, type ServerOptions } from './server.js';
+export { completion, createClient, greet } from './core.js';
 export {
-  MemoryCache,
-  LibraryError,
-  type CacheOptions,
-  type CacheStats,
-} from './core.js';
+  ClaudeError,
+  ClaudeAuthError,
+  ClaudeCLINotFoundError,
+  ClaudeRateLimitError,
+  ClaudeExecutionError,
+} from './exceptions.js';
+export type {
+  Role,
+  Message,
+  UsageInfo,
+  ClaudeResponse,
+  ClaudeClientOptions,
+  CompletionOptions,
+  ChatCompletionRequest,
+  ChatCompletionChoice,
+  ChatCompletionUsage,
+  ModelResponse,
+  CustomLLMHandler,
+  CustomProviderEntry,
+} from './types.js';

@@ -51,7 +51,7 @@ jobs:
           node-version-file: '.nvmrc'
           cache: 'npm'
           registry-url: 'https://registry.npmjs.org'
-          scope: '@santhoshdasari786'
+          scope: '@santhoshdasari'
 
       - name: Install dependencies
         run: npm ci

@@ -1,149 +1,53 @@
 /**
- * Options for configuring the MemoryCache.
+ * Convenience functions and core interfaces for claude-lite-llm-ts.
  */
-export interface CacheOptions<T> {
-  /** Time to live in milliseconds */
-  ttlMs?: number;
-  /** Max items allowed in cache before eviction */
-  maxSize?: number;
-  /** Custom key serializer or normalizer */
-  keySerializer?: (key: string) => string;
-  /** Initial entries to populate */
-  initialEntries?: Record<string, T>;
+
+import { ClaudeClient } from './client.js';
+import type { ClaudeClientOptions, ClaudeResponse, CompletionOptions, Message } from './types.js';
+
+/**
+ * Creates and configures a new `ClaudeClient` instance.
+ */
+export function createClient(options: ClaudeClientOptions = {}): ClaudeClient {
+  return new ClaudeClient(options);
 }
 
 /**
- * Cache metrics and hit/miss statistics.
+ * Top-level convenience function to send a prompt to Claude using subscription authentication.
+ *
+ * @param prompt - Text prompt string or array of Message objects.
+ * @param options - Completion options and optional client configuration overrides.
+ *
+ * Usage:
+ * ```typescript
+ * import { completion } from '@santhoshdasari786/claude-lite-llm-ts';
+ *
+ * const response = await completion('Explain quantum computing in 2 sentences');
+ * console.log(response.content);
+ * ```
  */
-export interface CacheStats {
-  size: number;
-  hits: number;
-  misses: number;
-  hitRatio: number;
+export async function completion(
+  prompt: string | Message[],
+  options: CompletionOptions & ClaudeClientOptions = {},
+): Promise<ClaudeResponse> {
+  const client = new ClaudeClient({
+    token: options.token,
+    claudePath: options.claudePath,
+    envFile: options.envFile,
+    defaultModel: options.defaultModel,
+    defaultSystemPrompt: options.defaultSystemPrompt,
+    cwd: options.cwd,
+  });
+
+  return client.completion(prompt, options);
 }
 
 /**
- * Standard typed error for library operations.
+ * Backwards-compatibility greeting utility.
  */
-export class LibraryError extends Error {
-  public readonly code: string;
-
-  constructor(message: string, code = 'ERR_LIBRARY_DEFAULT') {
-    super(message);
-    this.name = 'LibraryError';
-    this.code = code;
-    Object.setPrototypeOf(this, new.target.prototype);
+export function greet(name: string): string {
+  if (!name || !name.trim()) {
+    throw new Error('name must not be empty');
   }
-}
-
-interface CacheItem<T> {
-  value: T;
-  expiresAt: number | null;
-}
-
-/**
- * An in-memory, TTL-capable, type-safe generic cache implementation.
- */
-export class MemoryCache<T = unknown> {
-  private readonly items = new Map<string, CacheItem<T>>();
-  private readonly ttlMs: number | null;
-  private readonly maxSize: number;
-  private readonly keySerializer: (key: string) => string;
-
-  private hitCount = 0;
-  private missCount = 0;
-
-  constructor(options: CacheOptions<T> = {}) {
-    this.ttlMs = options.ttlMs && options.ttlMs > 0 ? options.ttlMs : null;
-    this.maxSize = options.maxSize && options.maxSize > 0 ? options.maxSize : 1000;
-    this.keySerializer = options.keySerializer ?? ((k: string) => k);
-
-    if (options.initialEntries) {
-      for (const [key, value] of Object.entries(options.initialEntries)) {
-        this.set(key, value);
-      }
-    }
-  }
-
-  /**
-   * Sets a value in the cache with optional custom TTL override.
-   */
-  public set(key: string, value: T, customTtlMs?: number): void {
-    if (!key) {
-      throw new LibraryError('Key must be a non-empty string', 'ERR_INVALID_KEY');
-    }
-
-    const resolvedKey = this.keySerializer(key);
-
-    if (this.items.size >= this.maxSize && !this.items.has(resolvedKey)) {
-      const oldestKey = this.items.keys().next().value;
-      if (oldestKey !== undefined) {
-        this.items.delete(oldestKey);
-      }
-    }
-
-    const ttl = customTtlMs ?? this.ttlMs;
-    const expiresAt = ttl ? Date.now() + ttl : null;
-
-    this.items.set(resolvedKey, { value, expiresAt });
-  }
-
-  /**
-   * Retrieves a value from the cache. Returns undefined if not found or expired.
-   */
-  public get(key: string): T | undefined {
-    const resolvedKey = this.keySerializer(key);
-    const item = this.items.get(resolvedKey);
-
-    if (!item) {
-      this.missCount++;
-      return undefined;
-    }
-
-    if (item.expiresAt !== null && Date.now() > item.expiresAt) {
-      this.items.delete(resolvedKey);
-      this.missCount++;
-      return undefined;
-    }
-
-    this.hitCount++;
-    return item.value;
-  }
-
-  /**
-   * Returns true if key exists and has not expired.
-   */
-  public has(key: string): boolean {
-    return this.get(key) !== undefined;
-  }
-
-  /**
-   * Deletes a key from the cache.
-   */
-  public delete(key: string): boolean {
-    const resolvedKey = this.keySerializer(key);
-    return this.items.delete(resolvedKey);
-  }
-
-  /**
-   * Clears all items and resets statistics.
-   */
-  public clear(): void {
-    this.items.clear();
-    this.hitCount = 0;
-    this.missCount = 0;
-  }
-
-  /**
-   * Returns current statistics.
-   */
-  public getStats(): CacheStats {
-    const total = this.hitCount + this.missCount;
-    return {
-      size: this.items.size,
-      hits: this.hitCount,
-      misses: this.missCount,
-      hitRatio: total > 0 ? this.hitCount / total : 0,
-    };
-  }
+  return `Hello, ${name}!`;
 }
