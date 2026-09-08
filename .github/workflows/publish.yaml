@@ -78,7 +78,9 @@ jobs:
           npm publish --provenance --access public --tag "$NPM_TAG"
 
       - name: Pack tarball
-        run: npm pack --pack-destination dist-pack
+        run: |
+          mkdir -p dist-pack
+          npm pack --pack-destination dist-pack
 
       - name: Create GitHub Release
         if: github.event_name == 'push'
