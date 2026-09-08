@@ -4,8 +4,8 @@
  * CLI binary entrypoint for claude-lite-llm-ts.
  */
 
-import { completion } from './core.js';
-import { serveClaudeProxy } from './server.js';
+import { codexCompletion, completion } from './core.js';
+import { serveProxy } from './server.js';
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
@@ -13,14 +13,16 @@ async function main(): Promise<void> {
 
   if (!command || command === '--help' || command === '-h') {
     console.log(`
-Claude Lite LLM (TypeScript) - Programmatic Claude CLI & LiteLLM Custom Provider
+Claude & Codex Lite LLM (TypeScript) - Programmatic CLI & LiteLLM Custom Provider
 
 Usage:
-  claude-lite-llm-ts "<prompt>"                 Run a one-off prompt
+  claude-lite-llm-ts "<prompt>"                 Run a prompt using Claude CLI
+  claude-lite-llm-ts --provider codex "<prompt>" Run a prompt using Codex CLI
   claude-lite-llm-ts serve [--port 4000]         Start OpenAI/LiteLLM compatible HTTP server
 
 Options:
-  --model <name>     Model name or alias (e.g. sonnet, haiku, opus)
+  --provider <name>  Provider: 'claude' (default) or 'codex'
+  --model <name>     Model name or alias (e.g. sonnet, haiku, o3-mini, gpt-4o)
   --port <number>    Port for HTTP server (default 4000)
   --help, -h         Show help
 `);
@@ -30,21 +32,43 @@ Options:
   if (command === 'serve') {
     const portIndex = args.indexOf('--port');
     const port = portIndex !== -1 && args[portIndex + 1] ? Number(args[portIndex + 1]) : 4000;
-    const info = await serveClaudeProxy({ port });
-    console.log(`Claude LiteLLM proxy server listening at ${info.url}`);
+    const info = await serveProxy({ port });
+    console.log(`Proxy server listening at ${info.url}`);
     console.log(`- OpenAI Chat Completions: ${info.url}/v1/chat/completions`);
+    console.log(`- Models Endpoint:         ${info.url}/v1/models`);
     console.log(`- Health Check:            ${info.url}/health`);
     return;
   }
 
-  const modelIndex = args.indexOf('--model');
-  const model = modelIndex !== -1 && args[modelIndex + 1] ? args[modelIndex + 1] : undefined;
+  const providerIndex = args.indexOf('--provider');
+  const providerArg = providerIndex !== -1 ? args[providerIndex + 1] : undefined;
+  const provider = providerArg ? providerArg.toLowerCase() : '';
 
-  const prompt = args.filter((a, i) => i !== modelIndex && i !== modelIndex + 1).join(' ');
+  const modelIndex = args.indexOf('--model');
+  const model = modelIndex !== -1 ? args[modelIndex + 1] : undefined;
+
+  const promptArgs = args.filter(
+    (a, i) =>
+      i !== providerIndex && i !== providerIndex + 1 && i !== modelIndex && i !== modelIndex + 1,
+  );
+  const prompt = promptArgs.join(' ');
+
+  const isCodex =
+    provider === 'codex' ||
+    (model &&
+      (model.toLowerCase().startsWith('o3') ||
+        model.toLowerCase().startsWith('o1') ||
+        model.toLowerCase().startsWith('gpt-') ||
+        model.toLowerCase().startsWith('codex')));
 
   try {
-    const response = await completion(prompt, { model });
-    console.log(response.content);
+    if (isCodex) {
+      const response = await codexCompletion(prompt, { model });
+      console.log(response.content);
+    } else {
+      const response = await completion(prompt, { model });
+      console.log(response.content);
+    }
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`Error: ${msg}`);

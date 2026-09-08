@@ -1,7 +1,7 @@
 {
   "name": "@santhoshdasari/claude-lite-llm-ts",
-  "version": "0.2.2",
-  "description": "This is a library for claude wrapper for litellm that can be used to use claude subscriptions programatically",
+  "version": "0.3.0",
+  "description": "Programmatic Claude & Codex CLI wrapper for LiteLLM to use subscriptions without API keys",
   "keywords": [
     "typescript",
     "library",

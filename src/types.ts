@@ -231,3 +231,95 @@ export interface CustomProviderEntry {
   provider: string;
   custom_handler: CustomLLMHandler;
 }
+
+/**
+ * Client configuration options for CodexClient.
+ */
+export interface CodexClientOptions {
+  /**
+   * OpenAI or Codex API key (`OPENAI_API_KEY` or `CODEX_API_KEY`).
+   * Optional if authenticated via `codex login`.
+   */
+  apiKey?: string;
+  /**
+   * Custom path to the `codex` CLI binary executable.
+   */
+  codexPath?: string;
+  /**
+   * Optional path to `.env` file.
+   */
+  envFile?: string;
+  /**
+   * Default model to use (e.g. 'o3-mini', 'gpt-4o', 'o1').
+   */
+  defaultModel?: string;
+  /**
+   * Default system instructions to prepend.
+   */
+  defaultSystemPrompt?: string;
+  /**
+   * Working directory for CLI execution.
+   */
+  cwd?: string;
+}
+
+/**
+ * Completion options for Codex executions.
+ */
+export interface CodexCompletionOptions {
+  /**
+   * Model name or alias (e.g. 'o3-mini', 'gpt-4o', 'o1', 'codex').
+   */
+  model?: string;
+  /**
+   * System prompt instructions.
+   */
+  systemPrompt?: string;
+  /**
+   * Sandboxing mode (e.g. 'read-only', 'default', 'none').
+   */
+  sandbox?: string;
+  /**
+   * Whether to run in full-auto mode without confirmation prompts.
+   */
+  fullAuto?: boolean;
+  /**
+   * Avoid persisting session history to disk (default true).
+   */
+  ephemeral?: boolean;
+  /**
+   * Skip checking whether current working directory is a git repository.
+   */
+  skipGitRepoCheck?: boolean;
+  /**
+   * JSON Schema for structured output validation.
+   */
+  outputSchema?: string | Record<string, unknown>;
+  /**
+   * Command execution timeout in milliseconds.
+   */
+  timeoutMs?: number;
+}
+
+/**
+ * Response structure returned by CodexClient.completion().
+ */
+export interface CodexResponse {
+  content: string;
+  sessionId?: string;
+  durationMs: number;
+  usage: UsageInfo;
+  structuredOutput?: unknown;
+  raw?: Record<string, unknown>;
+}
+
+/**
+ * Stream chunk emitted by CodexClient.completionStream().
+ */
+export interface CodexStreamChunk {
+  type: 'delta' | 'final';
+  text: string;
+  usage?: UsageInfo;
+  sessionId?: string;
+  raw?: unknown;
+}

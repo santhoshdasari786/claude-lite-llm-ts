@@ -5,22 +5,23 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Node Version](https://img.shields.io/node/v/@santhoshdasari/claude-lite-llm-ts)
 
-A lightweight TypeScript wrapper around Anthropic's `claude` (Claude Code) CLI that allows developers to run Claude LLMs programmatically using their active **Claude Pro/Team/Max subscription** via `CLAUDE_CODE_TOKEN` — bypassing pay-per-token API keys.
+A lightweight TypeScript toolkit wrapping **Anthropic Claude Code CLI** (`claude`) and **OpenAI Codex CLI** (`codex`), allowing developers to run Claude and Codex LLMs programmatically using their active **Claude Pro/Team/Max** or **ChatGPT Plus/Pro** subscriptions — bypassing pay-per-token API fees.
 
-Includes a **`ClaudeSubscriptionProvider`** adapter and a **`litellm`** compatibility layer for registering custom providers in LLM pipelines, plus real-time streaming, OpenAI function calling / tools support, and a local OpenAI-compatible HTTP proxy server.
+Includes **`ClaudeSubscriptionProvider`** and **`CodexSubscriptionProvider`** adapters, a unified **`litellm`** compatibility manager for registering custom providers in LLM pipelines, real-time token streaming, OpenAI function calling / tools support, and a local OpenAI-compatible HTTP proxy server.
 
 ---
 
 ## Features
 
-- 🎟️ **Subscription-Powered**: Authenticate using your Claude subscription token (`CLAUDE_CODE_TOKEN`) instead of per-token API keys.
-- 🔌 **LiteLLM Custom Provider**: Export and register `ClaudeSubscriptionProvider` via `litellm.custom_provider_map = [...]`.
-- 🌊 **Real-Time Token Streaming**: Native line-by-line token streaming via `stream: true` or `completionStream()`.
+- 🎟️ **Subscription-Powered Execution**: Authenticate using your Claude subscription token (`CLAUDE_CODE_TOKEN`) or OpenAI Codex session / API key (`OPENAI_API_KEY` / `CODEX_API_KEY` / `codex login`).
+- 🤖 **Dual Provider Support**: Seamlessly call both Claude models (`sonnet`, `opus`, `haiku`) and Codex models (`o3-mini`, `gpt-4o`, `o1`).
+- 🔌 **LiteLLM Custom Provider**: Export and register `ClaudeSubscriptionProvider` and `CodexSubscriptionProvider` via `litellm.custom_provider_map = [...]`.
+- 🌊 **Real-Time Token Streaming**: Native line-by-line token streaming via `stream: true`, `completionStream()`, or `codexCompletionStream()`.
 - 🛠️ **OpenAI Tool / Function Calling**: Support for OpenAI-format `tools` returning structured `tool_calls` with `finish_reason: "tool_calls"`.
 - ⚡ **OpenAI / LiteLLM Response Parity**: Returns OpenAI-compatible `ModelResponse` with `choices`, `role`, and token `usage` metrics.
 - 💬 **Flexible Prompt Formats**: Pass raw prompt strings or conversational message arrays (`[{ role: 'user', content: '...' }]`).
-- 🛡️ **Safe LLM Execution**: Disables built-in CLI tool execution by default (`--tools ""`) for pure text completions.
-- 🌐 **Built-in OpenAI-Compatible HTTP Proxy**: Run a local HTTP server (`/v1/chat/completions` with SSE streaming, `/v1/models`) to integrate with any OpenAI client, LangChain, or LiteLLM proxy.
+- 🛡️ **Safe LLM Execution**: Disables built-in CLI tool execution by default (`--tools ""` for Claude, `--sandbox read-only --ephemeral` for Codex) for pure text completions.
+- 🌐 **Built-in OpenAI-Compatible HTTP Proxy**: Run a local HTTP server (`/v1/chat/completions` with SSE streaming, `/v1/models`) supporting both Claude and Codex models to integrate with any OpenAI client, LangChain, or LiteLLM proxy.
 - 📦 **Dual ESM & CommonJS**: Full TypeScript types, tree-shaking support, and dual module builds.
 
 ---
@@ -38,52 +39,60 @@ pnpm add @santhoshdasari/claude-lite-llm-ts
 bun add @santhoshdasari/claude-lite-llm-ts
 ```
 
-### Prerequisites
+### CLI Prerequisites
 
-Ensure the Claude Code CLI is installed and configured on your machine:
+Install either or both CLI tools depending on your needs:
+
+#### 1. Anthropic Claude Code CLI
 
 ```bash
 npm install -g @anthropic-ai/claude-code
-# or native install:
-# curl -fsSL https://claude.ai/install.sh | bash
+claude setup-token # or export CLAUDE_CODE_TOKEN=sk-ant-oat01-...
 ```
 
-Generate your subscription token (or retrieve your existing session token):
+#### 2. OpenAI Codex CLI
 
 ```bash
-claude setup-token
-```
-
-Add the token to your `.env` file or export it:
-
-```env
-CLAUDE_CODE_TOKEN=sk-ant-oat01-...
+npm install -g @openai/codex
+# or on macOS: brew install --cask codex
+codex login # or export OPENAI_API_KEY=sk-...
 ```
 
 ---
 
 ## Usage Guide
 
-### 1. Register with LiteLLM Custom Provider
+### 1. Register with LiteLLM Custom Provider (Claude & Codex)
 
 ```typescript
-import { litellm, ClaudeSubscriptionProvider } from '@santhoshdasari/claude-lite-llm-ts';
+import {
+  litellm,
+  ClaudeSubscriptionProvider,
+  CodexSubscriptionProvider,
+} from '@santhoshdasari/claude-lite-llm-ts';
 
-// 1. Instantiate and register the custom provider
+// 1. Register custom providers
 const claude_provider = new ClaudeSubscriptionProvider();
-litellm.custom_provider_map = [{ provider: 'claude_sub', custom_handler: claude_provider }];
+const codex_provider = new CodexSubscriptionProvider();
 
-// 2. Call completion via custom provider
-const response = await litellm.completion({
+litellm.custom_provider_map = [
+  { provider: 'claude_sub', custom_handler: claude_provider },
+  { provider: 'codex_sub', custom_handler: codex_provider },
+];
+
+// 2. Call Claude via LiteLLM
+const claudeResponse = await litellm.completion({
   model: 'claude_sub/sonnet',
-  messages: [
-    { role: 'system', content: 'You are an expert software engineer.' },
-    { role: 'user', content: 'Explain event loops in Node.js in 2 sentences.' },
-  ],
+  messages: [{ role: 'user', content: 'Explain event loops in Node.js in 2 sentences.' }],
 });
+console.log(claudeResponse.choices[0].message.content);
 
-console.log(response.choices[0].message.content);
-console.log('Tokens:', response.usage);
+// 3. Call Codex via LiteLLM
+const codexResponse = await litellm.completion({
+  model: 'codex_sub/o3-mini',
+  messages: [{ role: 'user', content: 'Write a binary search algorithm in TypeScript.' }],
+});
+console.log(codexResponse.choices[0].message.content);
 ```
 
 ---
@@ -93,13 +102,14 @@ console.log('Tokens:', response.usage);
 #### Via `litellm.completion({ stream: true })`
 
 ```typescript
-import { litellm, ClaudeSubscriptionProvider } from '@santhoshdasari/claude-lite-llm-ts';
+import { litellm, CodexSubscriptionProvider } from '@santhoshdasari/claude-lite-llm-ts';
 
-const claude_provider = new ClaudeSubscriptionProvider();
-litellm.custom_provider_map = [{ provider: 'claude_sub', custom_handler: claude_provider }];
+litellm.custom_provider_map = [
+  { provider: 'codex_sub', custom_handler: new CodexSubscriptionProvider() },
+];
 
 const stream = await litellm.completion({
-  model: 'claude_sub/sonnet',
+  model: 'codex_sub/o3-mini',
   messages: [{ role: 'user', content: 'Count from 1 to 5 slowly.' }],
   stream: true,
 });
@@ -110,17 +120,19 @@ for await (const chunk of stream) {
 }
 ```
 
-#### Via direct `completionStream()`
+#### Via direct `completionStream()` or `codexCompletionStream()`
 
 ```typescript
-import { completionStream } from '@santhoshdasari/claude-lite-llm-ts';
+import { completionStream, codexCompletionStream } from '@santhoshdasari/claude-lite-llm-ts';
 
+// Stream from Claude
 for await (const chunk of completionStream('Write a short haiku about coding.')) {
-  if (chunk.type === 'delta') {
-    process.stdout.write(chunk.text);
-  } else if (chunk.type === 'final') {
-    console.log('\nUsage:', chunk.usage);
-  }
+  if (chunk.type === 'delta') process.stdout.write(chunk.text);
+}
+
+// Stream from Codex
+for await (const chunk of codexCompletionStream('Write a short haiku about TypeScript.')) {
+  if (chunk.type === 'delta') process.stdout.write(chunk.text);
 }
 ```
 
@@ -128,16 +140,17 @@ for await (const chunk of completionStream('Write a short haiku about coding.'))
 
 ### 3. OpenAI Tools & Function Calling 🛠️
 
-Pass standard OpenAI-compatible tool definitions. The provider prompts Claude and returns standard `tool_calls`:
+Pass standard OpenAI-compatible tool definitions. The provider prompts the model and returns standard `tool_calls`:
 
 ```typescript
-import { litellm, ClaudeSubscriptionProvider } from '@santhoshdasari/claude-lite-llm-ts';
+import { litellm, CodexSubscriptionProvider } from '@santhoshdasari/claude-lite-llm-ts';
 
-const claude_provider = new ClaudeSubscriptionProvider();
-litellm.custom_provider_map = [{ provider: 'claude_sub', custom_handler: claude_provider }];
+litellm.custom_provider_map = [
+  { provider: 'codex_sub', custom_handler: new CodexSubscriptionProvider() },
+];
 
 const response = await litellm.completion({
-  model: 'claude_sub/sonnet',
+  model: 'codex_sub/o3-mini',
   messages: [{ role: 'user', content: 'What is the weather in Tokyo right now?' }],
   tools: [
     {
@@ -167,22 +180,27 @@ if (response.choices[0].finish_reason === 'tool_calls') {
 
 ---
 
-### 4. Direct Function Call (`completion`)
+### 4. Direct Convenience Functions (`completion` & `codexCompletion`)
 
 ```typescript
-import { completion } from '@santhoshdasari/claude-lite-llm-ts';
+import { completion, codexCompletion } from '@santhoshdasari/claude-lite-llm-ts';
 
-const response = await completion('Explain quantum computing in 2 sentences.', {
-  model: 'sonnet', // or 'haiku', 'opus', 'claude-3-7-sonnet-latest'
+// Claude
+const claudeRes = await completion('Explain quantum computing in 2 sentences.', {
+  model: 'sonnet',
 });
+console.log(claudeRes.content);
 
-console.log(response.content);
-console.log(`Tokens: ${response.usage.inputTokens} in / ${response.usage.outputTokens} out`);
+// Codex
+const codexRes = await codexCompletion('Explain Dijkstra algorithm in 2 sentences.', {
+  model: 'o3-mini',
+});
+console.log(codexRes.content);
 ```
 
 ---
 
-### 5. Run as Local OpenAI Proxy Server (with SSE Streaming)
+### 5. Run as Local OpenAI Proxy Server (Supporting Claude & Codex)
 
 Start the proxy server via CLI:
 
@@ -193,27 +211,30 @@ npx claude-lite-llm-ts serve --port 4000
 Or programmatically:
 
 ```typescript
-import { serveClaudeProxy } from '@santhoshdasari/claude-lite-llm-ts';
+import { serveProxy } from '@santhoshdasari/claude-lite-llm-ts';
 
-const { url } = await serveClaudeProxy({ port: 4000 });
-console.log(`OpenAI-compatible server running at ${url}/v1/chat/completions`);
+const { url } = await serveProxy({ port: 4000 });
+console.log(`OpenAI proxy server running at ${url}`);
 ```
 
-You can now configure OpenAI clients, LangChain, or Cursor:
+Configure any OpenAI SDK (Python, TS, Curl):
 
 ```python
 from openai import OpenAI
 
 client = OpenAI(base_url="http://localhost:4000/v1", api_key="none")
 
-stream = client.chat.completions.create(
+# Call Claude
+res_claude = client.chat.completions.create(
     model="claude_sub/sonnet",
-    messages=[{"role": "user", "content": "Hello!"}],
-    stream=True,
+    messages=[{"role": "user", "content": "Hello Claude!"}],
 )
 
-for chunk in stream:
-    print(chunk.choices[0].delta.content or "", end="")
+# Call Codex
+res_codex = client.chat.completions.create(
+    model="codex_sub/o3-mini",
+    messages=[{"role": "user", "content": "Hello Codex!"}],
+)
 ```
 
 ---
@@ -223,25 +244,38 @@ for chunk in stream:
 ```typescript
 import {
   completion,
+  codexCompletion,
   ClaudeRateLimitError,
   ClaudeAuthError,
-  ClaudeCLINotFoundError,
+  CodexAuthError,
+  CodexRateLimitError,
 } from '@santhoshdasari/claude-lite-llm-ts';
 
 try {
-  const res = await completion('Hello Claude!');
+  const res = await codexCompletion('Hello Codex!');
   console.log(res.content);
 } catch (err) {
-  if (err instanceof ClaudeRateLimitError) {
-    console.error('Subscription quota reached:', err.message);
-  } else if (err instanceof ClaudeAuthError) {
-    console.error('Authentication failure:', err.message);
-  } else if (err instanceof ClaudeCLINotFoundError) {
-    console.error('Claude CLI executable not found:', err.message);
-  } else {
-    console.error('Execution error:', err);
+  if (err instanceof CodexRateLimitError) {
+    console.error('OpenAI/Codex quota reached:', err.message);
+  } else if (err instanceof CodexAuthError) {
+    console.error('Codex authentication failure:', err.message);
   }
 }
+```
+
+---
+
+## CLI Usage
+
+```bash
+# Claude prompt
+npx claude-lite-llm-ts "What is TypeScript?"
+
+# Codex prompt
+npx claude-lite-llm-ts --provider codex --model o3-mini "Write a binary search in Go"
+
+# Start proxy server
+npx claude-lite-llm-ts serve --port 4000
 ```
 
 ---
@@ -249,13 +283,11 @@ try {
 ## Testing
 
 ```bash
-# Run unit tests
+# Run unit & integration tests
 npm test
 
-# Run manual live tests
-node manual-tests/test_completion.mjs
-node manual-tests/test_stream.mjs
-node manual-tests/test_tools.mjs
+# Run tests with coverage
+npm run test:coverage
 ```
 
 ---

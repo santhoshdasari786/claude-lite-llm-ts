@@ -67,6 +67,33 @@ export class LiteLLMManager {
       );
     }
 
+    // Model name heuristic routing if no explicit provider prefix matched
+    if (!matchedEntry) {
+      const lower = modelStr.toLowerCase();
+      if (
+        lower.startsWith('codex') ||
+        lower.startsWith('o1') ||
+        lower.startsWith('o3') ||
+        lower.startsWith('o4') ||
+        lower.startsWith('gpt-')
+      ) {
+        matchedEntry = this._customProviderMap.find(
+          (e) =>
+            e.provider === 'codex_sub' || e.provider === 'codex_lite' || e.provider === 'codex',
+        );
+      } else if (
+        lower.startsWith('claude') ||
+        lower.startsWith('sonnet') ||
+        lower.startsWith('opus') ||
+        lower.startsWith('haiku')
+      ) {
+        matchedEntry = this._customProviderMap.find(
+          (e) =>
+            e.provider === 'claude_sub' || e.provider === 'claude_lite' || e.provider === 'claude',
+        );
+      }
+    }
+
     // Fallback: if only one provider registered and no prefix matched
     if (!matchedEntry && this._customProviderMap.length === 1) {
       matchedEntry = this._customProviderMap[0];

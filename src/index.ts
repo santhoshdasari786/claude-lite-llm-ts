@@ -1,14 +1,13 @@
 /**
  * @santhoshdasari/claude-lite-llm-ts
  *
- * Programmatic Claude CLI wrapper and LiteLLM custom provider powered by Claude subscriptions.
+ * Programmatic Claude & Codex CLI wrapper and LiteLLM custom provider powered by subscriptions.
  */
 
+// Claude
 export { ClaudeClient } from './client.js';
 export { ClaudeSubscriptionProvider, type ClaudeSubscriptionProviderOptions } from './provider.js';
-export { litellm, LiteLLMManager } from './litellm.js';
-export { createClaudeServer, serveClaudeProxy, type ServerOptions } from './server.js';
-export { completion, completionStream, createClient, greet } from './core.js';
+export { completion, completionStream, createClient } from './core.js';
 export {
   ClaudeError,
   ClaudeAuthError,
@@ -16,6 +15,34 @@ export {
   ClaudeRateLimitError,
   ClaudeExecutionError,
 } from './exceptions.js';
+
+// Codex
+export { CodexClient } from './codex-client.js';
+export {
+  CodexSubscriptionProvider,
+  type CodexSubscriptionProviderOptions,
+} from './codex-provider.js';
+export { codexCompletion, codexCompletionStream, createCodexClient } from './core.js';
+export {
+  CodexError,
+  CodexAuthError,
+  CodexCLINotFoundError,
+  CodexRateLimitError,
+  CodexExecutionError,
+} from './exceptions.js';
+
+// LiteLLM & Proxy Server
+export { litellm, LiteLLMManager } from './litellm.js';
+export {
+  createProxyServer,
+  createClaudeServer,
+  serveProxy,
+  serveClaudeProxy,
+  type ServerOptions,
+} from './server.js';
+export { greet } from './core.js';
+
+// Shared Types
 export type {
   Role,
   Message,
@@ -24,6 +51,10 @@ export type {
   ClaudeStreamChunk,
   ClaudeClientOptions,
   CompletionOptions,
+  CodexClientOptions,
+  CodexCompletionOptions,
+  CodexResponse,
+  CodexStreamChunk,
   ChatCompletionRequest,
   ChatCompletionChoice,
   ChatCompletionUsage,

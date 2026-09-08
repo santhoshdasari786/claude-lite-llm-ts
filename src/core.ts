@@ -77,6 +77,79 @@ export async function* completionStream(
 }
 
 /**
+ * Creates and configures a new `CodexClient` instance.
+ */
+import { CodexClient } from './codex-client.js';
+import type {
+  CodexClientOptions,
+  CodexCompletionOptions,
+  CodexResponse,
+  CodexStreamChunk,
+} from './types.js';
+
+export function createCodexClient(options: CodexClientOptions = {}): CodexClient {
+  return new CodexClient(options);
+}
+
+/**
+ * Top-level convenience function to send a prompt to Codex using subscription / API authentication.
+ *
+ * @param prompt - Text prompt string or array of Message objects.
+ * @param options - Completion options and optional client configuration overrides.
+ *
+ * Usage:
+ * ```typescript
+ * import { codexCompletion } from '@santhoshdasari/claude-lite-llm-ts';
+ *
+ * const response = await codexCompletion('Explain Dijkstra algorithm in 2 sentences');
+ * console.log(response.content);
+ * ```
+ */
+export async function codexCompletion(
+  prompt: string | Message[],
+  options: CodexCompletionOptions & CodexClientOptions = {},
+): Promise<CodexResponse> {
+  const client = new CodexClient({
+    apiKey: options.apiKey,
+    codexPath: options.codexPath,
+    envFile: options.envFile,
+    defaultModel: options.defaultModel,
+    defaultSystemPrompt: options.defaultSystemPrompt,
+    cwd: options.cwd,
+  });
+
+  return client.completion(prompt, options);
+}
+
+/**
+ * Top-level convenience function to stream responses from Codex in real time.
+ *
+ * Usage:
+ * ```typescript
+ * import { codexCompletionStream } from '@santhoshdasari/claude-lite-llm-ts';
+ *
+ * for await (const chunk of codexCompletionStream('Count 1 to 5')) {
+ *   if (chunk.type === 'delta') process.stdout.write(chunk.text);
+ * }
+ * ```
+ */
+export async function* codexCompletionStream(
+  prompt: string | Message[],
+  options: CodexCompletionOptions & CodexClientOptions = {},
+): AsyncIterable<CodexStreamChunk> {
+  const client = new CodexClient({
+    apiKey: options.apiKey,
+    codexPath: options.codexPath,
+    envFile: options.envFile,
+    defaultModel: options.defaultModel,
+    defaultSystemPrompt: options.defaultSystemPrompt,
+    cwd: options.cwd,
+  });
+
+  yield* client.completionStream(prompt, options);
+}
+
+/**
  * Backwards-compatibility greeting utility.
  */
 export function greet(name: string): string {

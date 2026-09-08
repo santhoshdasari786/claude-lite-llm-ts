@@ -1,22 +1,36 @@
 /**
  * Lightweight OpenAI / LiteLLM compatible HTTP proxy server.
- * Enables any OpenAI SDK, LiteLLM proxy, or tool to call Claude CLI via subscription.
+ * Enables any OpenAI SDK, LiteLLM proxy, or tool to call Claude and Codex CLI via subscriptions.
  */
 
 import http from 'node:http';
 import { ClaudeClient } from './client.js';
+import { CodexClient } from './codex-client.js';
+import { CodexSubscriptionProvider } from './codex-provider.js';
 import { ClaudeSubscriptionProvider } from './provider.js';
 import type { ChatCompletionRequest } from './types.js';
 
 export interface ServerOptions {
   port?: number;
   host?: string;
+  claudeClient?: ClaudeClient;
+  claudeProvider?: ClaudeSubscriptionProvider;
+  codexClient?: CodexClient;
+  codexProvider?: CodexSubscriptionProvider;
+  /** Backwards compatibility alias for claudeClient */
   client?: ClaudeClient;
+  /** Backwards compatibility alias for claudeProvider */
   provider?: ClaudeSubscriptionProvider;
 }
 
-export function createClaudeServer(options: ServerOptions = {}): http.Server {
-  const provider = options.provider || new ClaudeSubscriptionProvider({ client: options.client });
+export function createProxyServer(options: ServerOptions = {}): http.Server {
+  const claudeProvider =
+    options.claudeProvider ||
+    options.provider ||
+    new ClaudeSubscriptionProvider({ client: options.claudeClient || options.client });
+
+  const codexProvider =
+    options.codexProvider || new CodexSubscriptionProvider({ client: options.codexClient });
 
   const server = http.createServer(async (req, res) => {
     // CORS headers
@@ -35,7 +49,12 @@ export function createClaudeServer(options: ServerOptions = {}): http.Server {
     // Health check
     if (url === '/health' || url === '/') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', provider: 'claude_sub' }));
+      res.end(
+        JSON.stringify({
+          status: 'ok',
+          providers: ['claude_sub', 'codex_sub'],
+        }),
+      );
       return;
     }
 
@@ -51,6 +70,11 @@ export function createClaudeServer(options: ServerOptions = {}): http.Server {
             { id: 'claude_sub/opus', object: 'model', owned_by: 'anthropic-subscription' },
             { id: 'claude-3-7-sonnet-latest', object: 'model', owned_by: 'anthropic-subscription' },
             { id: 'claude-3-5-sonnet-latest', object: 'model', owned_by: 'anthropic-subscription' },
+            { id: 'codex_sub/o3-mini', object: 'model', owned_by: 'openai-subscription' },
+            { id: 'codex_sub/gpt-4o', object: 'model', owned_by: 'openai-subscription' },
+            { id: 'codex_sub/o1', object: 'model', owned_by: 'openai-subscription' },
+            { id: 'o3-mini', object: 'model', owned_by: 'openai-subscription' },
+            { id: 'gpt-4o', object: 'model', owned_by: 'openai-subscription' },
           ],
         }),
       );
@@ -67,6 +91,17 @@ export function createClaudeServer(options: ServerOptions = {}): http.Server {
       req.on('end', async () => {
         try {
           const parsed = JSON.parse(body) as ChatCompletionRequest;
+          const modelLower = (parsed.model || '').toLowerCase();
+
+          // Route to appropriate provider
+          const selectedProvider =
+            modelLower.startsWith('codex') ||
+            modelLower.startsWith('o1') ||
+            modelLower.startsWith('o3') ||
+            modelLower.startsWith('o4') ||
+            modelLower.startsWith('gpt-')
+              ? codexProvider
+              : claudeProvider;
 
           // Real-time Server-Sent Events (SSE) streaming
           if (parsed.stream) {
@@ -77,7 +112,7 @@ export function createClaudeServer(options: ServerOptions = {}): http.Server {
               'X-Accel-Buffering': 'no',
             });
 
-            const stream = provider.completionStream(parsed);
+            const stream = selectedProvider.completionStream(parsed);
             for await (const chunk of stream) {
               res.write(`data: ${JSON.stringify(chunk)}\n\n`);
             }
@@ -88,7 +123,7 @@ export function createClaudeServer(options: ServerOptions = {}): http.Server {
           }
 
           // Non-streaming completion
-          const result = await provider.completion(parsed);
+          const result = await selectedProvider.completion(parsed);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify(result));
         } catch (err: unknown) {
@@ -100,7 +135,7 @@ export function createClaudeServer(options: ServerOptions = {}): http.Server {
             JSON.stringify({
               error: {
                 message,
-                type: 'claude_execution_error',
+                type: 'execution_error',
                 code: 500,
               },
             }),
@@ -117,14 +152,19 @@ export function createClaudeServer(options: ServerOptions = {}): http.Server {
   return server;
 }
 
-export function serveClaudeProxy(options: ServerOptions = {}): Promise<{
+/**
+ * Backwards compatibility alias for `createProxyServer`.
+ */
+export const createClaudeServer = createProxyServer;
+
+export function serveProxy(options: ServerOptions = {}): Promise<{
   server: http.Server;
   port: number;
   url: string;
 }> {
   const port = options.port || Number(process.env.PORT || 4000);
   const host = options.host || '0.0.0.0';
-  const server = createClaudeServer(options);
+  const server = createProxyServer(options);
 
   return new Promise((resolve, reject) => {
     server.on('error', reject);
@@ -137,3 +177,8 @@ export function serveClaudeProxy(options: ServerOptions = {}): Promise<{
     });
   });
 }
+
+/**
+ * Backwards compatibility alias for `serveProxy`.
+ */
+export const serveClaudeProxy = serveProxy;

@@ -2,15 +2,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   ClaudeClient,
   ClaudeSubscriptionProvider,
+  CodexClient,
+  CodexSubscriptionProvider,
   litellm,
   completion,
+  codexCompletion,
+  codexCompletionStream,
+  createCodexClient,
   greet,
   ClaudeError,
   ClaudeCLINotFoundError,
   ClaudeAuthError,
   ClaudeRateLimitError,
   ClaudeExecutionError,
+  CodexError,
+  CodexCLINotFoundError,
+  CodexAuthError,
+  CodexRateLimitError,
+  CodexExecutionError,
   createClaudeServer,
+  createProxyServer,
 } from './index.js';
 
 describe('ClaudeClient', () => {
@@ -401,5 +412,274 @@ describe('ClaudeSubscriptionProvider Streaming', () => {
     expect(chunks[1]!.choices[0]!.delta.content).toBe(' world');
     expect(chunks[2]!.choices[0]!.finish_reason).toBe('stop');
     expect(chunks[2]!.usage?.total_tokens).toBe(7);
+  });
+});
+
+describe('CodexClient', () => {
+  let client: CodexClient;
+
+  beforeEach(() => {
+    client = new CodexClient({
+      apiKey: 'sk-test-123',
+      codexPath: process.execPath,
+    });
+  });
+
+  it('initializes with apiKey and resolves binary', () => {
+    expect(client.apiKey).toBe('sk-test-123');
+    expect(client.codexPath).toBe(process.execPath);
+  });
+
+  it('throws CodexCLINotFoundError when explicit path is invalid', () => {
+    expect(() => {
+      new CodexClient({ codexPath: '/non/existent/codex/binary' });
+    }).toThrow(CodexCLINotFoundError);
+  });
+
+  it('builds environment with OPENAI_API_KEY and CODEX_API_KEY', () => {
+    const env = client.buildEnv();
+    expect(env.OPENAI_API_KEY).toBe('sk-test-123');
+    expect(env.CODEX_API_KEY).toBe('sk-test-123');
+  });
+
+  it('formats raw string prompts directly', () => {
+    const formatted = client.formatPrompt('What is Python?');
+    expect(formatted.promptText).toBe('What is Python?');
+    expect(formatted.extractedSystemPrompt).toBeUndefined();
+  });
+
+  it('formats single user message directly without prefix', () => {
+    const formatted = client.formatPrompt([{ role: 'user', content: 'What is LiteLLM?' }]);
+    expect(formatted.promptText).toBe('What is LiteLLM?');
+    expect(formatted.extractedSystemPrompt).toBeUndefined();
+  });
+
+  it('extracts system messages and structures conversation history', () => {
+    const formatted = client.formatPrompt([
+      { role: 'system', content: 'You are an OpenAI assistant.' },
+      { role: 'user', content: 'Hello' },
+      { role: 'assistant', content: 'Hi there' },
+      { role: 'user', content: 'Can you write code?' },
+    ]);
+
+    expect(formatted.extractedSystemPrompt).toBe('You are an OpenAI assistant.');
+    expect(formatted.promptText).toContain('User: Hello');
+    expect(formatted.promptText).toContain('Assistant: Hi there');
+    expect(formatted.promptText).toContain('User: Can you write code?');
+  });
+
+  it('builds CLI command with appropriate default flags', () => {
+    const { cmd, args } = client.buildCommand('Test codex prompt', {
+      model: 'o3-mini',
+      fullAuto: true,
+      sandbox: 'read-only',
+    });
+
+    expect(cmd).toBe(process.execPath);
+    expect(args[0]).toBe('exec');
+    expect(args).toContain('--ephemeral');
+    expect(args).toContain('--skip-git-repo-check');
+    expect(args).toContain('-c');
+    expect(args).toContain('model="o3-mini"');
+    expect(args).toContain('--full-auto');
+    expect(args).toContain('--sandbox');
+    expect(args).toContain('read-only');
+    expect(args[args.length - 1]).toBe('Test codex prompt');
+  });
+});
+
+describe('CodexSubscriptionProvider', () => {
+  let provider: CodexSubscriptionProvider;
+  let mockClient: CodexClient;
+
+  beforeEach(() => {
+    mockClient = {
+      completion: vi.fn().mockResolvedValue({
+        content: 'Response from Codex',
+        sessionId: 'codex-sess-1',
+        durationMs: 250,
+        usage: {
+          inputTokens: 12,
+          outputTokens: 8,
+          totalTokens: 20,
+          totalCostUsd: 0,
+        },
+      }),
+      completionStream: vi.fn(),
+    } as unknown as CodexClient;
+
+    provider = new CodexSubscriptionProvider({ client: mockClient });
+  });
+
+  it('normalizes model name by stripping provider prefixes', () => {
+    expect(provider.cleanModelName('codex_sub/o3-mini')).toBe('o3-mini');
+    expect(provider.cleanModelName('codex_lite/gpt-4o')).toBe('gpt-4o');
+    expect(provider.cleanModelName('codex/o1')).toBe('o1');
+    expect(provider.cleanModelName('o3-mini')).toBe('o3-mini');
+  });
+
+  it('executes completion and returns standard ModelResponse', async () => {
+    const response = (await provider.completion({
+      model: 'codex_sub/o3-mini',
+      messages: [{ role: 'user', content: 'Write a quicksort' }],
+    })) as import('./types.js').ModelResponse;
+
+    expect(response.object).toBe('chat.completion');
+    expect(response.model).toBe('codex_sub/o3-mini');
+    expect(response.choices[0]!.message.content).toBe('Response from Codex');
+    expect(response.choices[0]!.finish_reason).toBe('stop');
+    expect(response.usage.total_tokens).toBe(20);
+  });
+
+  it('parses tool calls when model emits tool call json', async () => {
+    const toolCallClient = {
+      completion: vi.fn().mockResolvedValue({
+        content: JSON.stringify({
+          tool_calls: [
+            {
+              name: 'calculate_tax',
+              arguments: { amount: 100, state: 'CA' },
+            },
+          ],
+        }),
+        durationMs: 150,
+        usage: { inputTokens: 20, outputTokens: 15, totalTokens: 35, totalCostUsd: 0 },
+      }),
+    } as unknown as CodexClient;
+
+    const toolProvider = new CodexSubscriptionProvider({ client: toolCallClient });
+
+    const response = (await toolProvider.completion({
+      model: 'codex_sub/o3-mini',
+      messages: [{ role: 'user', content: 'Calculate CA tax on 100' }],
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'calculate_tax',
+            parameters: { type: 'object' },
+          },
+        },
+      ],
+    })) as import('./types.js').ModelResponse;
+
+    expect(response.choices[0]!.finish_reason).toBe('tool_calls');
+    expect(response.choices[0]!.message.tool_calls).toHaveLength(1);
+    expect(response.choices[0]!.message.tool_calls![0]!.function.name).toBe('calculate_tax');
+  });
+
+  it('streams ChatCompletionChunk objects in real time', async () => {
+    async function* mockStream() {
+      yield { type: 'delta' as const, text: 'Hello' };
+      yield { type: 'delta' as const, text: ' from Codex' };
+      yield {
+        type: 'final' as const,
+        text: '',
+        usage: { inputTokens: 4, outputTokens: 3, totalTokens: 7, totalCostUsd: 0 },
+      };
+    }
+
+    const streamClient = {
+      completionStream: vi.fn().mockReturnValue(mockStream()),
+    } as unknown as CodexClient;
+
+    const streamProvider = new CodexSubscriptionProvider({ client: streamClient });
+
+    const stream = (await streamProvider.completion({
+      model: 'codex_sub/o3-mini',
+      messages: [{ role: 'user', content: 'Hi' }],
+      stream: true,
+    })) as AsyncIterable<import('./types.js').ChatCompletionChunk>;
+
+    const chunks: import('./types.js').ChatCompletionChunk[] = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]!.choices[0]!.delta.content).toBe('Hello');
+    expect(chunks[1]!.choices[0]!.delta.content).toBe(' from Codex');
+    expect(chunks[2]!.choices[0]!.finish_reason).toBe('stop');
+  });
+});
+
+describe('LiteLLM Routing with Codex & Claude', () => {
+  it('routes to registered codex provider for codex_sub and o3 models', async () => {
+    const mockCodexHandler = {
+      completion: vi.fn().mockResolvedValue({
+        id: 'cmpl-codex-1',
+        object: 'chat.completion',
+        created: Date.now(),
+        model: 'codex_sub/o3-mini',
+        choices: [
+          {
+            index: 0,
+            message: { role: 'assistant', content: 'Codex output' },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 },
+      }),
+    };
+
+    litellm.registerProvider(
+      'codex_sub',
+      mockCodexHandler as unknown as import('./types.js').CustomLLMHandler,
+    );
+
+    const res = await litellm.completion({
+      model: 'codex_sub/o3-mini',
+      messages: [{ role: 'user', content: 'Test' }],
+    });
+
+    expect(mockCodexHandler.completion).toHaveBeenCalled();
+    expect((res as import('./types.js').ModelResponse).choices[0]!.message.content).toBe(
+      'Codex output',
+    );
+  });
+});
+
+describe('Codex Convenience Functions and Proxy Server', () => {
+  it('creates proxy server supporting codex and claude', () => {
+    const server = createProxyServer();
+    expect(server).toBeDefined();
+  });
+
+  it('exposes codexCompletion and codexCompletionStream helper functions', async () => {
+    expect(typeof codexCompletion).toBe('function');
+    expect(typeof codexCompletionStream).toBe('function');
+  });
+
+  it('creates codex client instance using createCodexClient', () => {
+    const client = createCodexClient({ apiKey: 'sk-test' });
+    expect(client).toBeInstanceOf(CodexClient);
+    expect(client.apiKey).toBe('sk-test');
+  });
+});
+
+describe('Codex Exceptions', () => {
+  it('instantiates all Codex exception types properly', () => {
+    const err = new CodexError('Base codex error', 'ERR_BASE');
+    expect(err.name).toBe('CodexError');
+    expect(err.code).toBe('ERR_BASE');
+
+    const notFound = new CodexCLINotFoundError('Not found');
+    expect(notFound.name).toBe('CodexCLINotFoundError');
+    expect(notFound.code).toBe('ERR_CODEX_NOT_FOUND');
+
+    const auth = new CodexAuthError('Auth error');
+    expect(auth.name).toBe('CodexAuthError');
+    expect(auth.code).toBe('ERR_CODEX_AUTH');
+
+    const rate = new CodexRateLimitError('Rate limit', { error: 'rate_limited' });
+    expect(rate.name).toBe('CodexRateLimitError');
+    expect(rate.code).toBe('ERR_CODEX_RATE_LIMIT');
+    expect(rate.rawResponse).toEqual({ error: 'rate_limited' });
+
+    const exec = new CodexExecutionError('Failed', { returncode: 1, stderr: 'error details' });
+    expect(exec.name).toBe('CodexExecutionError');
+    expect(exec.code).toBe('ERR_CODEX_EXECUTION');
+    expect(exec.returncode).toBe(1);
+    expect(exec.stderr).toBe('error details');
   });
 });
