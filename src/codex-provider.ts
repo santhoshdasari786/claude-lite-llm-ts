@@ -11,7 +11,13 @@ import type {
   CustomLLMHandler,
   Message,
   ModelResponse,
+  SessionUsage,
+  StatusLineOptions,
+  StatusReport,
   ToolCall,
+  UsageLimitCheckResult,
+  UsageLimitPolicy,
+  UsageLimits,
 } from './types.js';
 
 export interface CodexSubscriptionProviderOptions extends CodexClientOptions {
@@ -305,5 +311,40 @@ If no tool call is needed, respond with standard text.
       return this.completion(params as ChatCompletionRequest & { stream: true });
     }
     return this.completion(params as ChatCompletionRequest & { stream?: false });
+  }
+
+  /**
+   * Retrieves usage for the active or specified session.
+   */
+  public getUsage(sessionId?: string): SessionUsage {
+    return this.client.getUsage(sessionId);
+  }
+
+  /**
+   * Calculates limits, context window percentage, and headroom for a session.
+   */
+  public getLimits(sessionId?: string, policy?: UsageLimitPolicy): UsageLimits {
+    return this.client.getLimits(sessionId, policy);
+  }
+
+  /**
+   * Checks whether the session is within specified or configured usage limits.
+   */
+  public checkUsageLimit(sessionId?: string, policy?: UsageLimitPolicy): UsageLimitCheckResult {
+    return this.client.checkUsageLimit(sessionId, policy);
+  }
+
+  /**
+   * Gathers comprehensive environment, authentication, and session status diagnostics.
+   */
+  public async getStatus(sessionId?: string): Promise<StatusReport> {
+    return this.client.getStatus(sessionId);
+  }
+
+  /**
+   * Generates a concise single-line statusline representing session usage.
+   */
+  public getStatusLine(sessionId?: string, options?: StatusLineOptions): string {
+    return this.client.getStatusLine(sessionId, options);
   }
 }

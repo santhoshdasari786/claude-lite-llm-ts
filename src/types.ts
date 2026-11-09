@@ -2,6 +2,11 @@
  * Types and interfaces for claude-lite-llm-ts.
  */
 
+import type { UsageTracker } from './usage-tracker.js';
+import type { UsageLimitPolicy } from './usage-types.js';
+
+export * from './usage-types.js';
+
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
 
 export interface Message {
@@ -61,6 +66,14 @@ export interface ClaudeClientOptions {
    * Working directory for CLI execution.
    */
   cwd?: string;
+  /**
+   * Optional custom usage tracker instance.
+   */
+  usageTracker?: UsageTracker;
+  /**
+   * Optional usage limit policy to enforce.
+   */
+  limitPolicy?: UsageLimitPolicy;
 }
 
 export interface CompletionOptions {
@@ -261,6 +274,14 @@ export interface CodexClientOptions {
    * Working directory for CLI execution.
    */
   cwd?: string;
+  /**
+   * Optional custom usage tracker instance.
+   */
+  usageTracker?: UsageTracker;
+  /**
+   * Optional usage limit policy to enforce.
+   */
+  limitPolicy?: UsageLimitPolicy;
 }
 
 /**

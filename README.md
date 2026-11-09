@@ -22,6 +22,9 @@ Includes **`ClaudeSubscriptionProvider`** and **`CodexSubscriptionProvider`** ad
 - 💬 **Flexible Prompt Formats**: Pass raw prompt strings or conversational message arrays (`[{ role: 'user', content: '...' }]`).
 - 🛡️ **Safe LLM Execution**: Disables built-in CLI tool execution by default (`--tools ""` for Claude, `--sandbox read-only --ephemeral` for Codex) for pure text completions.
 - 🌐 **Built-in OpenAI-Compatible HTTP Proxy**: Run a local HTTP server (`/v1/chat/completions` with SSE streaming, `/v1/models`) supporting both Claude and Codex models to integrate with any OpenAI client, LangChain, or LiteLLM proxy.
+- 📊 **Session Usage & Rate Limit Monitoring**: Track session token consumption (input, output, cache read/write), estimated cost, and context window headroom (% used) like Codex CLI (`/status`, `/usage`, `/statusline`) and Claude CLI.
+- 🚦 **Wrapper Action Policies & Cooldowns**: Set usage policies (budget limits, request caps, token ceilings) to enforce limits before execution, triggering automatic alerts, compacting, or failovers.
+- 🔒 **Security First**: Automatically masks authentication credentials (`sk-***xxxx`) in logs/statuslines, sanitizes inputs, and resiliently reads persistent CLI stats without leaking secrets.
 - 📦 **Dual ESM & CommonJS**: Full TypeScript types, tree-shaking support, and dual module builds.
 
 ---
@@ -239,6 +242,59 @@ res_codex = client.chat.completions.create(
 
 ---
 
+### 6. Checking Session Usage, Limits & Statusline (Codex & Claude)
+
+Track session tokens, monitor context window utilization, and format CLI statuslines:
+
+#### Programmatic Usage in Your Library / App:
+
+```typescript
+import {
+  createClient,
+  createCodexClient,
+  getSessionUsage,
+  getUsageLimits,
+  checkUsageLimit,
+  getStatusLine,
+} from '@santhoshdasari/claude-lite-llm-ts';
+
+// 1. Get usage summary for current session
+const session = getSessionUsage('my-session-id', 'claude');
+console.log(`Tokens used: ${session.totalTokens}, Cost: $${session.totalCostUsd}`);
+
+// 2. Check context window limits & headroom
+const limits = getUsageLimits('my-session-id', 'claude-3-7-sonnet');
+console.log(
+  `Context used: ${limits.contextWindowPercent}% (${limits.contextWindowRemainingTokens} tokens left)`,
+);
+console.log(`Status: ${limits.status}`); // 'ok' | 'warning' | 'limit_exceeded' | 'rate_limited'
+
+// 3. Statusline string (matches Codex / Claude CLI statusline)
+const statusline = getStatusLine({ sessionId: 'my-session-id', provider: 'claude' });
+console.log(statusline);
+// Output: [claude-3-7-sonnet] 14.2k tokens ($0.042) | Context: 7.1% (14.2k/200.0k) | Status: OK
+
+// 4. Enforce limit policies in LLM Lite wrapper before executing:
+const check = checkUsageLimit('my-session-id', 'claude-3-7-sonnet', {
+  maxCostUsd: 5.0,
+  warningThresholdPercent: 80,
+  maxSessionTokens: 150_000,
+});
+
+if (!check.allowed) {
+  console.warn(`Action required: ${check.reason}`);
+  // Execute actions: compact conversation, fallback to cheaper model, or prompt user
+}
+```
+
+#### Via Proxy Server Endpoints:
+
+- `GET /v1/usage?provider=claude&sessionId=...`: returns full JSON usage and context limit calculations.
+- `GET /v1/status`: returns environment, CLI version, and authentication diagnostics (with masked credentials).
+- `GET /v1/statusline?provider=claude`: returns concise statusline text (or JSON with `Accept: application/json`).
+
+---
+
 ## Error Handling
 
 ```typescript
@@ -273,6 +329,18 @@ npx claude-lite-llm-ts "What is TypeScript?"
 
 # Codex prompt
 npx claude-lite-llm-ts --provider codex --model o3-mini "Write a binary search in Go"
+
+# Show diagnostics & CLI/auth status (/status)
+npx claude-lite-llm-ts status
+npx claude-lite-llm-ts status --provider codex --json
+
+# Show session token usage & context headroom (/usage)
+npx claude-lite-llm-ts usage
+npx claude-lite-llm-ts usage --provider codex
+
+# Display one-line statusbar (/statusline)
+npx claude-lite-llm-ts statusline
+npx claude-lite-llm-ts /statusline
 
 # Start proxy server
 npx claude-lite-llm-ts serve --port 4000

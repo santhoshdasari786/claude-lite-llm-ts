@@ -9,10 +9,24 @@ import type {
   CustomLLMHandler,
   CustomProviderEntry,
   ModelResponse,
+  SessionUsage,
+  StatusLineOptions,
+  StatusReport,
+  UsageLimitCheckResult,
+  UsageLimitPolicy,
+  UsageLimits,
+  UsageProviderType,
 } from './types.js';
+import { getProviderStatus } from './usage-reader.js';
+import { globalUsageTracker, UsageTracker } from './usage-tracker.js';
 
 export class LiteLLMManager {
   private _customProviderMap: CustomProviderEntry[] = [];
+  public readonly usageTracker: UsageTracker;
+
+  constructor(usageTracker: UsageTracker = globalUsageTracker) {
+    this.usageTracker = usageTracker;
+  }
 
   /**
    * Get registered custom provider map.
@@ -128,6 +142,53 @@ export class LiteLLMManager {
       return this.completion(params as ChatCompletionRequest & { stream: true });
     }
     return this.completion(params as ChatCompletionRequest & { stream?: false });
+  }
+
+  /**
+   * Retrieves session usage tracked across providers.
+   */
+  public getUsage(sessionId?: string, provider: UsageProviderType = 'claude'): SessionUsage {
+    return this.usageTracker.getOrCreateSession(sessionId, provider);
+  }
+
+  /**
+   * Calculates limits, context window percentage, and headroom.
+   */
+  public getLimits(sessionId?: string, model?: string, policy?: UsageLimitPolicy): UsageLimits {
+    const session = this.usageTracker.getOrCreateSession(sessionId);
+    return this.usageTracker.calculateLimits(session, model, policy);
+  }
+
+  /**
+   * Checks whether a completion request is permitted under usage limit policies.
+   */
+  public checkUsageLimit(
+    params: ChatCompletionRequest,
+    policy?: UsageLimitPolicy,
+  ): UsageLimitCheckResult {
+    const sessionId = (params.session_id as string) || undefined;
+    return this.usageTracker.checkLimit(sessionId, params.model, policy);
+  }
+
+  /**
+   * Queries status diagnostics for a specific provider.
+   */
+  public async getStatus(
+    provider: UsageProviderType = 'claude',
+    sessionId?: string,
+  ): Promise<StatusReport> {
+    return getProviderStatus({
+      provider,
+      usageTracker: this.usageTracker,
+      sessionId,
+    });
+  }
+
+  /**
+   * Formats a concise statusline for display or logging.
+   */
+  public getStatusLine(sessionId?: string, options?: StatusLineOptions): string {
+    return this.usageTracker.formatStatusLine(sessionId, options);
   }
 }
 

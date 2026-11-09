@@ -85,7 +85,16 @@ import type {
   CodexCompletionOptions,
   CodexResponse,
   CodexStreamChunk,
+  SessionUsage,
+  StatusLineOptions,
+  StatusReport,
+  UsageLimitCheckResult,
+  UsageLimitPolicy,
+  UsageLimits,
+  UsageProviderType,
 } from './types.js';
+import { getProviderStatus } from './usage-reader.js';
+import { globalUsageTracker } from './usage-tracker.js';
 
 export function createCodexClient(options: CodexClientOptions = {}): CodexClient {
   return new CodexClient(options);
@@ -157,4 +166,72 @@ export function greet(name: string): string {
     throw new Error('name must not be empty');
   }
   return `Hello, ${name}!`;
+}
+
+/**
+ * Top-level convenience function to get session usage.
+ */
+export function getSessionUsage(
+  sessionId?: string,
+  provider: UsageProviderType = 'claude',
+): SessionUsage {
+  return globalUsageTracker.getOrCreateSession(sessionId, provider);
+}
+
+/**
+ * Top-level convenience function to calculate usage limits and context window percentage.
+ */
+export function getUsageLimits(
+  sessionId?: string,
+  model?: string,
+  policy?: UsageLimitPolicy,
+): UsageLimits {
+  const session = globalUsageTracker.getOrCreateSession(sessionId);
+  return globalUsageTracker.calculateLimits(session, model, policy);
+}
+
+/**
+ * Top-level convenience function to check whether a session is within specified limits.
+ */
+export function checkUsageLimit(
+  sessionId?: string,
+  model?: string,
+  policy?: UsageLimitPolicy,
+): UsageLimitCheckResult {
+  return globalUsageTracker.checkLimit(sessionId, model, policy);
+}
+
+/**
+ * Top-level convenience function to get environment and provider status diagnostics.
+ */
+export async function getStatus(
+  provider: UsageProviderType = 'claude',
+  sessionId?: string,
+): Promise<StatusReport> {
+  return getProviderStatus({
+    provider,
+    usageTracker: globalUsageTracker,
+    sessionId,
+  });
+}
+
+/**
+ * Top-level convenience function to format a single statusline.
+ */
+export function getStatusLine(options: StatusLineOptions = {}): string {
+  return globalUsageTracker.formatStatusLine(options.sessionId, options);
+}
+
+/**
+ * Resets usage tracking for a specific session.
+ */
+export function resetSessionUsage(sessionId: string): void {
+  globalUsageTracker.resetSession(sessionId);
+}
+
+/**
+ * Clears all usage tracking in the global tracker.
+ */
+export function clearAllUsage(): void {
+  globalUsageTracker.clear();
 }

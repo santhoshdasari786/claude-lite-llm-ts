@@ -4,11 +4,13 @@
  */
 
 import http from 'node:http';
+import { URL } from 'node:url';
 import { ClaudeClient } from './client.js';
 import { CodexClient } from './codex-client.js';
 import { CodexSubscriptionProvider } from './codex-provider.js';
 import { ClaudeSubscriptionProvider } from './provider.js';
 import type { ChatCompletionRequest } from './types.js';
+import { USAGE_REPORT_VERSION, type UsageProviderType } from './usage-types.js';
 
 export interface ServerOptions {
   port?: number;
@@ -44,10 +46,11 @@ export function createProxyServer(options: ServerOptions = {}): http.Server {
       return;
     }
 
-    const url = req.url || '';
+    const parsedUrl = new URL(req.url || '/', 'http://localhost');
+    const pathname = parsedUrl.pathname;
 
     // Health check
-    if (url === '/health' || url === '/') {
+    if (pathname === '/health' || pathname === '/') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -59,7 +62,7 @@ export function createProxyServer(options: ServerOptions = {}): http.Server {
     }
 
     // Models endpoint
-    if ((url === '/v1/models' || url === '/models') && req.method === 'GET') {
+    if ((pathname === '/v1/models' || pathname === '/models') && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
         JSON.stringify({
@@ -81,8 +84,84 @@ export function createProxyServer(options: ServerOptions = {}): http.Server {
       return;
     }
 
+    // Usage endpoint
+    if ((pathname === '/v1/usage' || pathname === '/usage') && req.method === 'GET') {
+      const providerParam = (
+        parsedUrl.searchParams.get('provider') || 'claude'
+      ).toLowerCase() as UsageProviderType;
+      const sessionId =
+        parsedUrl.searchParams.get('sessionId') ||
+        parsedUrl.searchParams.get('session') ||
+        undefined;
+      const provider = providerParam === 'codex' ? codexProvider : claudeProvider;
+      const session = provider.getUsage(sessionId);
+      const limits = provider.getLimits(sessionId);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          version: USAGE_REPORT_VERSION,
+          timestamp: new Date().toISOString(),
+          provider: providerParam,
+          session,
+          limits,
+          allSessions: provider.client.usageTracker.getAllSessions(),
+        }),
+      );
+      return;
+    }
+
+    // Status endpoint
+    if ((pathname === '/v1/status' || pathname === '/status') && req.method === 'GET') {
+      const claudeStatus = await claudeProvider.getStatus();
+      const codexStatus = await codexProvider.getStatus();
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          version: USAGE_REPORT_VERSION,
+          timestamp: new Date().toISOString(),
+          claude: claudeStatus,
+          codex: codexStatus,
+        }),
+      );
+      return;
+    }
+
+    // Statusline endpoint
+    if ((pathname === '/v1/statusline' || pathname === '/statusline') && req.method === 'GET') {
+      const providerParam = (
+        parsedUrl.searchParams.get('provider') || 'claude'
+      ).toLowerCase() as UsageProviderType;
+      const sessionId =
+        parsedUrl.searchParams.get('sessionId') ||
+        parsedUrl.searchParams.get('session') ||
+        undefined;
+      const provider = providerParam === 'codex' ? codexProvider : claudeProvider;
+      const statusline = provider.getStatusLine(sessionId);
+
+      const accept = req.headers.accept || '';
+      if (accept.includes('application/json')) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            statusline,
+            session: provider.getUsage(sessionId),
+            limits: provider.getLimits(sessionId),
+          }),
+        );
+      } else {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end(`${statusline}\n`);
+      }
+      return;
+    }
+
     // Chat completions endpoint
-    if ((url === '/v1/chat/completions' || url === '/chat/completions') && req.method === 'POST') {
+    if (
+      (pathname === '/v1/chat/completions' || pathname === '/chat/completions') &&
+      req.method === 'POST'
+    ) {
       let body = '';
       req.on('data', (chunk) => {
         body += chunk;

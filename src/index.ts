@@ -42,7 +42,33 @@ export {
 } from './server.js';
 export { greet } from './core.js';
 
+// Usage Tracking, Status & Limits
+export {
+  UsageTracker,
+  globalUsageTracker,
+  resolveModelLimits,
+  formatTokenCount,
+  KNOWN_MODEL_LIMITS,
+  DEFAULT_MODEL_LIMIT,
+} from './usage-tracker.js';
+export {
+  maskSecret,
+  getProviderStatus,
+  readClaudePersistentStats,
+  readCodexPersistentStats,
+} from './usage-reader.js';
+export {
+  getSessionUsage,
+  getUsageLimits,
+  checkUsageLimit,
+  getStatus,
+  getStatusLine,
+  resetSessionUsage,
+  clearAllUsage,
+} from './core.js';
+
 // Shared Types
+export { USAGE_REPORT_VERSION } from './usage-types.js';
 export type {
   Role,
   Message,
@@ -66,4 +92,14 @@ export type {
   ToolDefinition,
   FunctionDefinition,
   ToolCall,
+  UsageLimitStatus,
+  UsageProviderType,
+  ModelLimitSpec,
+  SessionUsage,
+  UsageLimits,
+  UsageLimitPolicy,
+  UsageLimitCheckResult,
+  StatusReport,
+  StatusLineOptions,
+  RecordUsageParams,
 } from './types.js';

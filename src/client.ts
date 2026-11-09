@@ -19,8 +19,16 @@ import type {
   ClaudeStreamChunk,
   CompletionOptions,
   Message,
+  SessionUsage,
+  StatusLineOptions,
+  StatusReport,
   UsageInfo,
+  UsageLimitCheckResult,
+  UsageLimitPolicy,
+  UsageLimits,
 } from './types.js';
+import { getProviderStatus } from './usage-reader.js';
+import { globalUsageTracker, UsageTracker } from './usage-tracker.js';
 
 export class ClaudeClient {
   public readonly token?: string;
@@ -28,6 +36,8 @@ export class ClaudeClient {
   public readonly defaultModel?: string;
   public readonly defaultSystemPrompt?: string;
   public readonly cwd?: string;
+  public readonly usageTracker: UsageTracker;
+  public readonly limitPolicy?: UsageLimitPolicy;
 
   constructor(options: ClaudeClientOptions = {}) {
     if (options.envFile) {
@@ -40,6 +50,8 @@ export class ClaudeClient {
     this.defaultModel = options.defaultModel;
     this.defaultSystemPrompt = options.defaultSystemPrompt;
     this.cwd = options.cwd ? path.resolve(options.cwd) : undefined;
+    this.usageTracker = options.usageTracker || globalUsageTracker;
+    this.limitPolicy = options.limitPolicy;
     try {
       this.claudePath = this.resolveClaudePath(options.claudePath);
     } catch (err) {
@@ -363,6 +375,18 @@ export class ClaudeClient {
     prompt: string | Message[],
     options: CompletionOptions = {},
   ): Promise<ClaudeResponse> {
+    if (this.limitPolicy?.onLimitExceeded === 'throw') {
+      const check = this.usageTracker.checkLimit(
+        options.sessionId,
+        options.model || this.defaultModel,
+        this.limitPolicy,
+      );
+      if (!check.allowed) {
+        throw new ClaudeRateLimitError(check.reason || 'Usage limit exceeded');
+      }
+    }
+
+    const startTime = Date.now();
     const { promptText, extractedSystemPrompt } = this.formatPrompt(prompt);
 
     const mergedOptions: CompletionOptions = {
@@ -417,8 +441,19 @@ export class ClaudeClient {
 
         try {
           const response = this.parseOutput(stdout, stderr, code ?? 0);
+          const duration = response.durationMs || Date.now() - startTime;
+          this.usageTracker.recordUsage({
+            sessionId: options.sessionId,
+            provider: 'claude',
+            model: options.model || this.defaultModel,
+            usage: response.usage,
+            durationMs: duration,
+          });
           resolve(response);
         } catch (err) {
+          if (err instanceof ClaudeRateLimitError) {
+            this.usageTracker.recordRateLimit('claude');
+          }
           reject(err);
         }
       });
@@ -495,6 +530,14 @@ export class ClaudeClient {
               totalCostUsd: Number(parsed.total_cost_usd || 0),
             };
 
+            this.usageTracker.recordUsage({
+              sessionId:
+                options.sessionId || (parsed.session_id ? String(parsed.session_id) : undefined),
+              provider: 'claude',
+              model: options.model || this.defaultModel,
+              usage,
+            });
+
             push({
               chunk: {
                 type: 'final',
@@ -527,6 +570,7 @@ export class ClaudeClient {
         if (lower.includes('auth') || lower.includes('token') || lower.includes('unauthorized')) {
           push({ error: new ClaudeAuthError(stderr) });
         } else if (lower.includes('429') || lower.includes('session limit')) {
+          this.usageTracker.recordRateLimit('claude');
           push({ error: new ClaudeRateLimitError(stderr) });
         } else {
           push({
@@ -568,5 +612,54 @@ export class ClaudeClient {
         child.kill('SIGTERM');
       }
     }
+  }
+
+  /**
+   * Retrieves usage for the active or specified session.
+   */
+  public getUsage(sessionId?: string): SessionUsage {
+    return this.usageTracker.getOrCreateSession(sessionId, 'claude', this.defaultModel);
+  }
+
+  /**
+   * Calculates limits, context window percentage, and headroom for a session.
+   */
+  public getLimits(sessionId?: string, policy?: UsageLimitPolicy): UsageLimits {
+    const session = this.getUsage(sessionId);
+    return this.usageTracker.calculateLimits(
+      session,
+      this.defaultModel,
+      policy || this.limitPolicy,
+    );
+  }
+
+  /**
+   * Checks whether the session is within specified or configured usage limits.
+   */
+  public checkUsageLimit(sessionId?: string, policy?: UsageLimitPolicy): UsageLimitCheckResult {
+    return this.usageTracker.checkLimit(sessionId, this.defaultModel, policy || this.limitPolicy);
+  }
+
+  /**
+   * Gathers comprehensive environment, authentication, and session status diagnostics.
+   */
+  public async getStatus(sessionId?: string): Promise<StatusReport> {
+    return getProviderStatus({
+      provider: 'claude',
+      client: this,
+      usageTracker: this.usageTracker,
+      sessionId,
+    });
+  }
+
+  /**
+   * Generates a concise single-line statusline representing session usage.
+   */
+  public getStatusLine(sessionId?: string, options: StatusLineOptions = {}): string {
+    return this.usageTracker.formatStatusLine(sessionId, {
+      provider: 'claude',
+      model: this.defaultModel,
+      ...options,
+    });
   }
 }

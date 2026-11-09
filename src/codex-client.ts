@@ -20,8 +20,16 @@ import type {
   CodexResponse,
   CodexStreamChunk,
   Message,
+  SessionUsage,
+  StatusLineOptions,
+  StatusReport,
   UsageInfo,
+  UsageLimitCheckResult,
+  UsageLimitPolicy,
+  UsageLimits,
 } from './types.js';
+import { getProviderStatus } from './usage-reader.js';
+import { globalUsageTracker, UsageTracker } from './usage-tracker.js';
 
 export class CodexClient {
   public readonly apiKey?: string;
@@ -29,6 +37,8 @@ export class CodexClient {
   public readonly defaultModel?: string;
   public readonly defaultSystemPrompt?: string;
   public readonly cwd?: string;
+  public readonly usageTracker: UsageTracker;
+  public readonly limitPolicy?: UsageLimitPolicy;
 
   constructor(options: CodexClientOptions = {}) {
     if (options.envFile) {
@@ -41,6 +51,8 @@ export class CodexClient {
     this.defaultModel = options.defaultModel;
     this.defaultSystemPrompt = options.defaultSystemPrompt;
     this.cwd = options.cwd ? path.resolve(options.cwd) : undefined;
+    this.usageTracker = options.usageTracker || globalUsageTracker;
+    this.limitPolicy = options.limitPolicy;
 
     try {
       this.codexPath = this.resolveCodexPath(options.codexPath);
@@ -242,6 +254,17 @@ export class CodexClient {
     prompt: string | Message[],
     options: CodexCompletionOptions = {},
   ): Promise<CodexResponse> {
+    if (this.limitPolicy?.onLimitExceeded === 'throw') {
+      const check = this.usageTracker.checkLimit(
+        undefined,
+        options.model || this.defaultModel,
+        this.limitPolicy,
+      );
+      if (!check.allowed) {
+        throw new CodexRateLimitError(check.reason || 'Usage limit exceeded');
+      }
+    }
+
     const { promptText, extractedSystemPrompt } = this.formatPrompt(prompt, options.systemPrompt);
     const { cmd, args } = this.buildCommand(promptText, options, extractedSystemPrompt);
 
@@ -304,10 +327,25 @@ export class CodexClient {
         }
 
         if (code !== 0 && code !== null) {
-          this.handleExecutionError(code, stdout, stderr);
+          try {
+            this.handleExecutionError(code, stdout, stderr);
+          } catch (err) {
+            if (err instanceof CodexRateLimitError) {
+              this.usageTracker.recordRateLimit('codex');
+            }
+            reject(err);
+            return;
+          }
         }
 
         const parsedResult = this.parseOutput(stdout, durationMs);
+        this.usageTracker.recordUsage({
+          sessionId: parsedResult.sessionId,
+          provider: 'codex',
+          model: options.model || this.defaultModel,
+          usage: parsedResult.usage,
+          durationMs,
+        });
         resolve(parsedResult);
       });
     });
@@ -405,12 +443,26 @@ export class CodexClient {
     }
 
     if (exitCode !== 0 && exitCode !== null) {
-      this.handleExecutionError(exitCode, fullText, stderr);
+      try {
+        this.handleExecutionError(exitCode, fullText, stderr);
+      } catch (err) {
+        if (err instanceof CodexRateLimitError) {
+          this.usageTracker.recordRateLimit('codex');
+        }
+        throw err;
+      }
     }
 
     if (!finalUsage) {
       finalUsage = this.estimateUsage(promptText, fullText);
     }
+
+    this.usageTracker.recordUsage({
+      sessionId,
+      provider: 'codex',
+      model: options.model || this.defaultModel,
+      usage: finalUsage,
+    });
 
     yield {
       type: 'final',
@@ -558,6 +610,55 @@ export class CodexClient {
       returncode: code,
       stdout,
       stderr,
+    });
+  }
+
+  /**
+   * Retrieves usage for the active or specified session.
+   */
+  public getUsage(sessionId?: string): SessionUsage {
+    return this.usageTracker.getOrCreateSession(sessionId, 'codex', this.defaultModel);
+  }
+
+  /**
+   * Calculates limits, context window percentage, and headroom for a session.
+   */
+  public getLimits(sessionId?: string, policy?: UsageLimitPolicy): UsageLimits {
+    const session = this.getUsage(sessionId);
+    return this.usageTracker.calculateLimits(
+      session,
+      this.defaultModel,
+      policy || this.limitPolicy,
+    );
+  }
+
+  /**
+   * Checks whether the session is within specified or configured usage limits.
+   */
+  public checkUsageLimit(sessionId?: string, policy?: UsageLimitPolicy): UsageLimitCheckResult {
+    return this.usageTracker.checkLimit(sessionId, this.defaultModel, policy || this.limitPolicy);
+  }
+
+  /**
+   * Gathers comprehensive environment, authentication, and session status diagnostics.
+   */
+  public async getStatus(sessionId?: string): Promise<StatusReport> {
+    return getProviderStatus({
+      provider: 'codex',
+      client: this,
+      usageTracker: this.usageTracker,
+      sessionId,
+    });
+  }
+
+  /**
+   * Generates a concise single-line statusline representing session usage.
+   */
+  public getStatusLine(sessionId?: string, options: StatusLineOptions = {}): string {
+    return this.usageTracker.formatStatusLine(sessionId, {
+      provider: 'codex',
+      model: this.defaultModel,
+      ...options,
     });
   }
 }
